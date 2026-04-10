@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ocean Reconstruction — Interactive Viewer</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f0f4f8;
+            color: #333;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 30px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+        .header h1 { font-size: 1.8em; }
+        .header p  { opacity: 0.85; margin-top: 4px; font-size: 0.95em; }
+
+        .main {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: auto auto;
+            gap: 16px;
+            padding: 16px;
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+            padding: 16px;
+        }
+        .card h2 {
+            color: #667eea;
+            font-size: 1.05em;
+            margin-bottom: 10px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 6px;
+        }
+
+        /* Controls row */
+        .controls {
+            grid-column: 1 / -1;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .controls label { font-weight: 600; font-size: 0.9em; }
+        .controls select, .controls button {
+            padding: 6px 14px;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+            font-size: 0.9em;
+            cursor: pointer;
+        }
+        .controls button {
+            background: #667eea;
+            color: white;
+            border: none;
+            font-weight: 600;
+        }
+        .controls button:hover { background: #5568d4; }
+
+        #status {
+            font-size: 0.85em;
+            color: #888;
+            margin-left: auto;
+        }
+
+        /* Map panels */
+        #map-pred, #map-target { width: 100%; height: 420px; }
+
+        /* Profile panel spans full width */
+        .profile-card {
+            grid-column: 1 / -1;
+        }
+        #profile-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        #profile-temp, #profile-salt { width: 100%; height: 380px; }
+
+        #click-hint {
+            text-align: center;
+            color: #aaa;
+            font-style: italic;
+            padding: 60px 0;
+            font-size: 0.95em;
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h1>🌊 Ocean Reconstruction — Interactive Viewer</h1>
+    <p>Click anywhere on the map to view the vertical profile at that location.</p>
+</div>
+
+<div class="main">
+
+    <!-- Controls -->
+    <div class="card controls">
+        <label for="var-select">Variable:</label>
+        <select id="var-select">
+            <option value="thetao">Temperature (θ, °C)</option>
+            <option value="so">Salinity (S, PSU)</option>
+        </select>
+        <button id="load-btn">Load Surface Maps</button>
+        <span id="status">Not loaded</span>
+    </div>
+
+    <!-- Prediction map -->
+    <div class="card">
+        <h2>Prediction (surface)</h2>
+        <div id="map-pred"></div>
+    </div>
+
+    <!-- Target map -->
+    <div class="card">
+        <h2>Target (surface)</h2>
+        <div id="map-target"></div>
+    </div>
+
+    <!-- Vertical profiles -->
+    <div class="card profile-card">
+        <h2>Vertical Profile <span id="profile-title" style="font-weight:normal; color:#999;"></span></h2>
+        <div id="profile-container">
+            <div id="click-hint" style="grid-column:1/-1">
+                Click on a map point to display the vertical profile here.
+            </div>
+            <div id="profile-temp" style="display:none;"></div>
+            <div id="profile-salt" style="display:none;"></div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+const BASE = '';   // same origin as Flask
+
+let lats = [], lons = [], depths = [];
+let currentVar = 'thetao';
+
+// ── Fetch metadata once ──────────────────────────────────────────────────────
+async function fetchMeta() {
+    const r = await fetch(`${BASE}/meta`);
+    const d = await r.json();
+    lats   = d.lats;
+    lons   = d.lons;
+    depths = d.depths;
+    document.getElementById('status').textContent =
+        `Date: ${d.date}  |  Grid: ${lats.length}×${lons.length}  |  Depths: ${depths.length}`;
+}
+
+// ── Load & render surface maps ───────────────────────────────────────────────
+async function loadSurface() {
+    const varName = document.getElementById('var-select').value;
+    currentVar = varName;
+
+    document.getElementById('status').textContent = 'Loading…';
+    const r = await fetch(`${BASE}/surface?var=${varName}`);
+    const d = await r.json();
+
+    const label = varName === 'thetao' ? 'Temperature (°C)' : 'Salinity (PSU)';
+    const cscale = varName === 'thetao' ? 'RdYlBu' : 'Viridis';
+    const zmin = varName === 'thetao' ? 0  : 30;
+    const zmax = varName === 'thetao' ? 40 : 40;
+
+    const commonHeatmap = (z, title, divId) => ({
+        data: [{
+            type: 'heatmap',
+            z: z,
+            x: d.lons,
+            y: d.lats,
+            colorscale: cscale,
+            zmin, zmax,
+            reversescale: true,
+            colorbar: { title: label, thickness: 14 },
+            hovertemplate: 'Lon: %{x:.2f}<br>Lat: %{y:.2f}<br>Value: %{z:.3f}<extra></extra>',
+        }],
+        layout: {
+            margin: { t: 10, b: 40, l: 50, r: 10 },
+            xaxis: { title: 'Longitude' },
+            yaxis: { title: 'Latitude' },
+            paper_bgcolor: 'white',
+            plot_bgcolor: '#eaf2ff',
+        },
+        config: { responsive: true, displayModeBar: false },
+    });
+
+    const predCfg   = commonHeatmap(d.pred,   'Prediction', 'map-pred');
+    const targetCfg = commonHeatmap(d.target, 'Target',     'map-target');
+
+    Plotly.react('map-pred',   predCfg.data,   predCfg.layout,   predCfg.config);
+    Plotly.react('map-target', targetCfg.data, targetCfg.layout, targetCfg.config);
+
+    // Attach click handlers
+    document.getElementById('map-pred').on('plotly_click',   onMapClick);
+    document.getElementById('map-target').on('plotly_click', onMapClick);
+
+    document.getElementById('status').textContent =
+        `Loaded ${label} surface  |  Click map to view profile`;
+}
+
+// ── Handle map click ─────────────────────────────────────────────────────────
+async function onMapClick(eventData) {
+    const pt  = eventData.points[0];
+    const lat = pt.y;
+    const lon = pt.x;
+
+    document.getElementById('profile-title').textContent =
+        `— loading (${lat.toFixed(2)}°N, ${lon.toFixed(2)}°E)…`;
+
+    const r = await fetch(`${BASE}/profile?lat=${lat}&lon=${lon}`);
+    const d = await r.json();
+
+    document.getElementById('profile-title').textContent =
+        `@ ${d.actual_lat.toFixed(3)}°N, ${d.actual_lon.toFixed(3)}°E`;
+
+    renderProfile('profile-temp', d, 'thetao', 'Temperature (°C)');
+    renderProfile('profile-salt', d, 'so',     'Salinity (PSU)');
+
+    document.getElementById('click-hint').style.display  = 'none';
+    document.getElementById('profile-temp').style.display = '';
+    document.getElementById('profile-salt').style.display = '';
+
+    // Draw marker on both maps
+    const markerUpdate = {
+        'annotations': [{
+            x: d.actual_lon, y: d.actual_lat,
+            xref: 'x', yref: 'y',
+            text: '✕', showarrow: false,
+            font: { size: 16, color: 'black' },
+        }]
+    };
+    Plotly.relayout('map-pred',   markerUpdate);
+    Plotly.relayout('map-target', markerUpdate);
+}
+
+// ── Render a single profile panel ────────────────────────────────────────────
+function renderProfile(divId, data, varKey, label) {
+    const dep = data.depths;
+    const v   = data[varKey];
+
+    const trace = (name, key, color, dash) => ({
+        x: v[key], y: dep,
+        mode: 'lines+markers',
+        name,
+        line:   { color, dash, width: 2 },
+        marker: { size: 5 },
+        hovertemplate: `${name}<br>${label}: %{x:.4f}<br>Depth: %{y:.1f} m<extra></extra>`,
+    });
+
+    Plotly.react(divId,
+        [
+            trace('Background', 'bg',     '#2ecc71', 'dot'),
+            trace('Prediction', 'pred',   '#3498db', 'solid'),
+            trace('Target',     'target', '#e74c3c', 'dash'),
+        ],
+        {
+            margin: { t: 30, b: 50, l: 70, r: 20 },
+            xaxis:  { title: label },
+            yaxis:  { title: 'Depth (m)', autorange: 'reversed' },
+            legend: { orientation: 'h', y: -0.18 },
+            title:  { text: label, font: { size: 13 } },
+            paper_bgcolor: 'white',
+            plot_bgcolor:  '#f9fbff',
+        },
+        { responsive: true, displayModeBar: false }
+    );
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+document.getElementById('load-btn').addEventListener('click', loadSurface);
+document.getElementById('var-select').addEventListener('change', () => {
+    if (document.getElementById('map-pred').data) loadSurface();
+});
+
+fetchMeta().then(loadSurface);
+</script>
+</body>
+</html>

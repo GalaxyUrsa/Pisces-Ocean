@@ -1,0 +1,15 @@
+{
+  "train_start": "2025-06-24",
+  "train_end": "2025-07-01",
+  "val_start": "2025-06-24",
+  "val_end": "2025-07-01",
+  "background_dir": "./output_data/recon",
+  "target_dir": "./output_data/recon",
+  "epochs": 500,
+  "batch_size": 1,
+  "base_channels": 32,
+  "num_workers": 0,
+  "save_interval": 1,
+  "patience": 10,
+  "background_offset": 0
+}

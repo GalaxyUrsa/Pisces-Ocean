@@ -1,0 +1,4 @@
+inference_results/
+ConvNeXt-main/
+logs/
+*.nc
