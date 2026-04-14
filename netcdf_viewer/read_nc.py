@@ -9,12 +9,12 @@ import os
 from datetime import datetime
 
 
-src_path = r"F:\PythonWorkspace\predict_ts"
+src_path = r"/Users/gary/Desktop/Pisces-Ocean/download_utils/downloaded_data/Glorys"
 
 # =========================
 # 配置参数
 # =========================
-nc_file = r'datasets\SST\oisst-avhrr-v02r01.20250501.nc'
+nc_file = r'glorys_0.083deg_20260101.nc'
 
 # 是否生成日志CSV文件（默认False）
 save_log_to_csv = True
