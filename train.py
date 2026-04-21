@@ -23,19 +23,20 @@ from models.simple_convnext_net import ConvNeXtUNet as mymodel
 SURFACE_VARS = [
     'sss',  # Sea Surface Salinity
     'sst',  # Sea Surface Temperature
-    'sla',  # Sea Level Anomaly
-    'ugos',
-    'vgos',
+    # 'sla',  # Sea Level Anomaly
+    # 'ugos',
+    # 'vgos',
 ]
 
 # 数据索引（自动推导，无需手动修改）
 _SURFACE_INDEX = {
-    'sss':  ['SSS', 'sos',  'sss'],
-    'sst':  ['SST', 'sst',  'sst'],
+    'sss':  ['SSS', 'so',  'sss'],
+    'sst':  ['SST', 'thetao',  'sst'],
     'sla':  ['SLA', 'sla',  'sla'],
     'ugos': ['SLA', 'ugos', 'ugos'],
     'vgos': ['SLA', 'vgos', 'vgos'],
 }
+
 data_index = (
     [_SURFACE_INDEX[v] for v in SURFACE_VARS] +
     [
@@ -45,6 +46,7 @@ data_index = (
         ['Background', 'so',     'bg_s_3d'],
     ]
 )
+
 IN_CHANNELS = len(SURFACE_VARS) + 40  # surface vars + bg_t_3d(20) + bg_s_3d(20)
 
 
@@ -347,8 +349,8 @@ if __name__=="__main__":
     # 训练参数
     batch_size = 1
     num_epochs = 50
-    learning_rate = 1e-4
-    num_workers = 4
+    learning_rate = 5e-5
+    num_workers = 8
 
     # 创建本次训练的 log 目录
     run_id = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -359,6 +361,7 @@ if __name__=="__main__":
     # 归一化参数
     use_normalization = True  # 是否使用归一化
     norm_stats_path = os.path.join(log_dir, 'normalization_stats.json')
+    root_norm_stats_path = 'normalization_stats.json'  # 根目录缓存路径
 
     # -------------------------------------------------------------------------------------------------
     # 准备数据
@@ -374,10 +377,10 @@ if __name__=="__main__":
     # train_dates = ['20250501', '20250502', '20250503', '20250504', '20250505',
     #                '20250506', '20250507', '']
     # val_dates = ['20250508', '20250509', '20250510']
-    start_train = date(2024, 7, 8)
-    end_train = date(2025, 9, 30)
-    start_val = date(2025, 10, 1)
-    end_val = date(2026, 1, 2)
+    start_train = date(2021,  1,  8)
+    end_train   = date(2024, 12, 31)
+    start_val   = date(2025,  1,  1)
+    end_val     = date(2025, 12, 31)
 
     def generate_date_list(start, end):
         delta = end - start
@@ -394,15 +397,20 @@ if __name__=="__main__":
     # -------------------------------------------------------------------------------------------------
     norm_stats = None
     if use_normalization:
-        if os.path.exists(norm_stats_path):
-            print(f"\nFound existing normalization stats: {norm_stats_path}")
-            user_input = input("Use existing stats? (y/n): ").strip().lower()
-            if user_input == 'y':
-                norm_stats = load_normalization_stats(norm_stats_path)
-            else:
-                norm_stats = compute_normalization_stats(train_dates, dataloader, norm_stats_path)
+        if os.path.exists(root_norm_stats_path):
+            # 根目录已有缓存，直接跳过计算
+            print(f"\nFound cached normalization stats at root: {root_norm_stats_path}, skipping computation.")
+            norm_stats = load_normalization_stats(root_norm_stats_path)
+            # 同时复制一份到本次 log 目录
+            import shutil
+            shutil.copy(root_norm_stats_path, norm_stats_path)
+            print(f"Copied to log dir: {norm_stats_path}")
         else:
-            norm_stats = compute_normalization_stats(train_dates, dataloader, norm_stats_path)
+            # 根目录没有缓存，计算并同时保存到根目录和 log 目录
+            norm_stats = compute_normalization_stats(train_dates, dataloader, root_norm_stats_path)
+            import shutil
+            shutil.copy(root_norm_stats_path, norm_stats_path)
+            print(f"Copied to log dir: {norm_stats_path}")
     else:
         print("\nNormalization is disabled.")
 
@@ -454,7 +462,7 @@ if __name__=="__main__":
     # 创建优化器和损失函数
     # -------------------------------------------------------------------------------------------------
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
 
     # -------------------------------------------------------------------------------------------------
     # 训练循环

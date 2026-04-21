@@ -49,11 +49,11 @@ from models.simple_convnext_net import ConvNeXtUNet as mymodel
 # 消融实验配置 — 与 train.py 保持一致
 # =============================================================================
 SURFACE_VARS = [
-    'sss',  # Sea Surface Salinity
-    'sst',  # Sea Surface Temperature
-    'sla',  # Sea Level Anomaly
-    'ugos',
-    'vgos',
+    # 'sss',  # Sea Surface Salinity
+    # 'sst',  # Sea Surface Temperature
+    # 'sla',  # Sea Level Anomaly
+    # 'ugos',
+    # 'vgos',
 ]
 
 # 数据索引（自动推导，无需手动修改）
@@ -276,9 +276,9 @@ def compute_layer_rmse(prediction, target):
 
 def main():
     parser = argparse.ArgumentParser(description='Ocean Reconstruction Model Inference')
-    parser.add_argument('--model_path', type=str, default='./logs/20260408_160455/best_model.pth',
+    parser.add_argument('--model_path', type=str, default='./logs/20260415_111742/best_model.pth',
                        help='Path to trained model checkpoint')
-    parser.add_argument('--date', type=str, default='20251220',
+    parser.add_argument('--date', type=str, default='20260202',
                        help='Date to run inference on (YYYYMMDD format)')
     parser.add_argument('--save_dir', type=str, default='./inference_results',
                        help='Directory to save inference results')
@@ -317,7 +317,7 @@ def main():
 
     # Initialize data loader
     print("\nLoading data...")
-    dataloader = OceanDatasetLoader(r"F:\PythonWorkspace\predict_ts\datasets")
+    dataloader = OceanDatasetLoader()
 
     # Load data for the specified date
     raw_data = dataloader.load_single_date(args.date, isLog=True)

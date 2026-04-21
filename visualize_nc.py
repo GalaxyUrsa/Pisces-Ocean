@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 # =========================
 ds = xr.open_dataset(
     # r"./output_data\recon\2025\recon_20250701.nc"
-    r"./sit_2025_05.nc"
+    r"./datasets\SSS/glorys_sss_0.083deg_20260111.nc"
 )
 
 thetao = ds["thetao"].isel(time=0)

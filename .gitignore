@@ -2,3 +2,11 @@ inference_results/
 ConvNeXt-main/
 logs/
 *.nc
+backup/
+config.yaml
+downloaded_data/
+netcdf_viewer/
+datasets/
+inference_glory_results/
+inference_AF_results/
+__pycache__/

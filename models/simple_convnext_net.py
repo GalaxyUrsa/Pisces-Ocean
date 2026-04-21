@@ -5,11 +5,13 @@ from timm.layers import trunc_normal_, DropPath
 from timm.models import register_model
 
 class LayerNorm(nn.Module):
-    r""" LayerNorm that supports two data formats: channels_last (default) or channels_first. 
-    The ordering of the dimensions in the inputs. channels_last corresponds to inputs with 
-    shape (batch_size, height, width, channels) while channels_first corresponds to inputs 
-    with shape (batch_size, channels, height, width).
     """
+        LayerNorm that supports two data formats: channels_last (default) or channels_first. 
+        The ordering of the dimensions in the inputs. channels_last corresponds to inputs with 
+        shape (batch_size, height, width, channels) while channels_first corresponds to inputs 
+        with shape (batch_size, channels, height, width).
+    """
+
     def __init__(self, normalized_shape, eps=1e-6, data_format="channels_last"):
         super().__init__()
         self.weight = nn.Parameter(torch.ones(normalized_shape))
@@ -31,16 +33,18 @@ class LayerNorm(nn.Module):
             return x
 
 class ConvNeXt_Block(nn.Module):
-    r""" ConvNeXt Block. There are two equivalent implementations:
-    (1) DwConv -> LayerNorm (channels_first) -> 1x1 Conv -> GELU -> 1x1 Conv; all in (N, C, H, W)
-    (2) DwConv -> Permute to (N, H, W, C); LayerNorm (channels_last) -> Linear -> GELU -> Linear; Permute back
-    We use (2) as we find it slightly faster in PyTorch
-    
-    Args:
-        dim (int): Number of input channels.
-        drop_path (float): Stochastic depth rate. Default: 0.0
-        layer_scale_init_value (float): Init value for Layer Scale. Default: 1e-6.
     """
+        ConvNeXt Block. There are two equivalent implementations:
+        (1) DwConv -> LayerNorm (channels_first) -> 1x1 Conv -> GELU -> 1x1 Conv; all in (N, C, H, W)
+        (2) DwConv -> Permute to (N, H, W, C); LayerNorm (channels_last) -> Linear -> GELU -> Linear; Permute back
+        We use (2) as we find it slightly faster in PyTorch
+        
+        Args:
+            dim (int): Number of input channels.
+            drop_path (float): Stochastic depth rate. Default: 0.0
+            layer_scale_init_value (float): Init value for Layer Scale. Default: 1e-6.
+    """
+    
     def __init__(self, dim, drop_path=0., layer_scale_init_value=1e-6):
         super().__init__()
         self.dwconv = nn.Conv2d(dim, dim, kernel_size=7, padding=3, groups=dim) # depthwise conv
@@ -81,7 +85,7 @@ class ConvNeXtUNet(nn.Module):
         self.down2 = nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1)  # 240->120
         
         # Bottleneck（大尺度背景场）
-        self.stage3 = nn.Sequential(*[ConvNeXt_Block(256) for _ in range(3)])  # 建议改为6而非9
+        self.stage3 = nn.Sequential(*[ConvNeXt_Block(256) for _ in range(2)])  # 建议改为6而非9
         
         # 解码器（上采样路径）
         self.up1 = nn.Sequential(

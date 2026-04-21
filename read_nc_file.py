@@ -5,7 +5,9 @@ import numpy as np
 import xarray as xr
 
 # File path
-file_path = r"F:\PythonWorkspace\predict_ts\datasets\Background\glory_resample_1_8_20250501.nc"
+file_path = r"D:\datasets\AF_thetao\glorys_0.083deg_20260202.nc"
+# "C:\Users\user\Downloads\cmems_mod_glo_phy_anfc_0.083deg_P1D-m_1776734444479.nc"
+
 
 # Open the NetCDF file
 print(f"Opening file: {file_path}")
@@ -62,8 +64,8 @@ lat_name = 'latitude' if 'latitude' in ds.coords else 'lat'
 
 if 'thetao' in ds:
     thetao_subset = ds['thetao'].sel(
-        {lon_name: slice(100, 159.875),
-         lat_name: slice(0, 49.875)}
+        {lon_name: slice(100, 159.99),
+         lat_name: slice(0, 49.99)}
     ).values
 
     # Remove time dimension if it exists (squeeze removes dimensions of size 1)

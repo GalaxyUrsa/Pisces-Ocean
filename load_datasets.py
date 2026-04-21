@@ -20,7 +20,7 @@ from pathlib import Path
 class OceanDatasetLoader:
     """Load ocean datasets from multiple sources"""
 
-    def __init__(self, base_path: str = r"F:\PythonWorkspace\predict_ts\datasets"):
+    def __init__(self, base_path: str = r"D:\datasets"):
         """
         Initialize the dataset loader
 
@@ -33,14 +33,14 @@ class OceanDatasetLoader:
             'SLA': 'SLA',
             'SST': 'SST',
             'Glorys': 'Glorys',
-            'Background': 'Background'
+            'Background': 'Glorys'
         }
 
         # Define which variables to load from each folder
         self.variable_mapping = {
-            'SSS': ['sos'],
+            'SSS': ['so'],
             'SLA': ['sla', 'ugos', 'vgos'],
-            'SST': ['sst'],
+            'SST': ['thetao'],
             'Glorys': ['thetao', 'so'],
             'Background': ['thetao', 'so']
         }
@@ -137,16 +137,16 @@ class OceanDatasetLoader:
             print(f"Loading data for date: {date}")
             print(f"{'='*60}")
 
-        for folder_name in self.folders.values():
+        for logical_name, physical_folder in self.folders.items():
             try:
                 # Background folder reads data from 7 days earlier
-                if folder_name == 'Background':
+                if logical_name == 'Background':
                     lookup_date = (datetime.strptime(date, '%Y%m%d') - timedelta(days=7)).strftime('%Y%m%d')
                 else:
                     lookup_date = date
 
                 # Get all files in the folder
-                folder_path = self.base_path / folder_name
+                folder_path = self.base_path / physical_folder
                 files = sorted(folder_path.glob("*.nc"))
 
                 # Find the file matching the date
@@ -158,15 +158,15 @@ class OceanDatasetLoader:
 
                 if matching_file is None:
                     if isLog:
-                        print(f"\nWarning: No file found for date {lookup_date} in {folder_name}")
+                        print(f"\nWarning: No file found for date {lookup_date} in {logical_name}")
                     continue
 
                 if isLog:
-                    print(f"\n{folder_name}: {matching_file.name}")
+                    print(f"\n{logical_name}: {matching_file.name}")
 
                 # Determine if we need to select depth levels
-                select_depth = folder_name in ['Glorys', 'Background']
-                variables = self.variable_mapping[folder_name]
+                select_depth = logical_name in ['Glorys', 'Background']
+                variables = self.variable_mapping[logical_name]
 
                 # Load the file
                 file_data = self.load_single_file(matching_file, variables, lon_slice, lat_slice, select_depth)
@@ -176,11 +176,11 @@ class OceanDatasetLoader:
                     for var_name, var_data in file_data.items():
                         print(f"  {var_name}: shape {var_data.shape}")
 
-                result[folder_name] = file_data
+                result[logical_name] = file_data
 
             except Exception as e:
                 if isLog:
-                    print(f"Error loading {folder_name} for date {date}: {e}")
+                    print(f"Error loading {logical_name} for date {date}: {e}")
 
         return result
 
@@ -251,50 +251,50 @@ class OceanDatasetLoader:
         return all_data
 
 
-def main():
-    """Example usage"""
-    # Initialize loader
-    loader = OceanDatasetLoader()
+# def main():
+#     """Example usage"""
+#     # Initialize loader
+#     loader = OceanDatasetLoader()
 
-    # Option 1: Load data for a single date
-    print("=" * 60)
-    print("Loading data for a single date")
-    print("=" * 60)
+#     # Option 1: Load data for a single date
+#     print("=" * 60)
+#     print("Loading data for a single date")
+#     print("=" * 60)
 
-    date = '20250501'  # Change this to load different dates
-    data = loader.load_single_date(date)
+#     date = '20250501'  # Change this to load different dates
+#     data = loader.load_single_date(date)
 
-    # Print summary
-    print("\n" + "=" * 60)
-    print(f"Data Summary for {date}")
-    print("=" * 60)
+#     # Print summary
+#     print("\n" + "=" * 60)
+#     print(f"Data Summary for {date}")
+#     print("=" * 60)
 
-    for folder_name, folder_data in data.items():
-        print(f"\n{folder_name}:")
-        for var_name, var_data in folder_data.items():
-            print(f"  {var_name}:")
-            print(f"    Shape: {var_data.shape}")
-            print(f"    Dtype: {var_data.dtype}")
-            print(f"    Range: [{np.nanmin(var_data):.4f}, {np.nanmax(var_data):.4f}]")
-            print(f"    NaN count: {np.isnan(var_data).sum()}")
+#     for folder_name, folder_data in data.items():
+#         print(f"\n{folder_name}:")
+#         for var_name, var_data in folder_data.items():
+#             print(f"  {var_name}:")
+#             print(f"    Shape: {var_data.shape}")
+#             print(f"    Dtype: {var_data.dtype}")
+#             print(f"    Range: [{np.nanmin(var_data):.4f}, {np.nanmax(var_data):.4f}]")
+#             print(f"    NaN count: {np.isnan(var_data).sum()}")
 
-    # Option 2: Load data for multiple dates
-    print("\n\n" + "=" * 60)
-    print("Loading data for multiple dates")
-    print("=" * 60)
+#     # Option 2: Load data for multiple dates
+#     print("\n\n" + "=" * 60)
+#     print("Loading data for multiple dates")
+#     print("=" * 60)
 
-    dates = ['20250501', '20250502', '20250503']
-    all_dates_data = {}
+#     dates = ['20250501', '20250502', '20250503']
+#     all_dates_data = {}
 
-    for date in dates:
-        all_dates_data[date] = loader.load_single_date(date)
+#     for date in dates:
+#         all_dates_data[date] = loader.load_single_date(date)
 
-    print("\n" + "=" * 60)
-    print(f"Loaded data for {len(all_dates_data)} dates")
-    print("=" * 60)
+#     print("\n" + "=" * 60)
+#     print(f"Loaded data for {len(all_dates_data)} dates")
+#     print("=" * 60)
 
-    return data
+#     return data
 
 
-if __name__ == "__main__":
-    data = main()
+# if __name__ == "__main__":
+#     data = main()
