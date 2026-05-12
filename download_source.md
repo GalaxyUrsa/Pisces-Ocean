@@ -11,6 +11,8 @@ This document describes all data sources used for ocean reconstruction model tra
   - [Surface Geostrophic Currents (Ugos/Vgos)](#4-surface-geostrophic-currents-ugosvgos)
   - [Sea Surface Salinity (SSS)](#5-sea-surface-salinity-sss)
   - [Sea Surface Temperature (SST)](#6-sea-surface-temperature-sst)
+- [Potential Data](#potential-data)
+  - [ANALYSIS FORECAST](#7-global-ocean-physics-analysis-and-forecast)
 
 ---
 
@@ -158,6 +160,32 @@ https://data.marine.copernicus.eu/product/MULTIOBS_GLO_PHY_S_SURFACE_MYNRT_015_0
 **Data Access**:
 ```
 https://www.ncei.noaa.gov/data/sea-surface-temperature-optimum-interpolation/v2.1/access/avhrr/
+```
+
+---
+
+## Potential Data
+
+### 7. Global Ocean Physics Analysis and Forecast
+
+**Purpose**: Surface observation input feature
+
+| Property | Value |
+|----------|-------|
+| **Full Name** | Global Ocean Physics Analysis and Forecast |
+| **Product ID** | GLOBAL_ANALYSISFORECAST_PHY_001_024 |
+| **datasets ID（daily）** | cmems_mod_glo_phy_anfc_0.083deg_P1D-m |
+| **Source** | Numerical models |
+| **Spatial Resolution** | 1/12° × 1/12° (0.083°) |
+| **Temporal Extent** | 1 Nov 2020 to 24 Apr 2026 |
+| **Processing Level** | L4 |
+| **Vertical Layers** | 50 |
+| **Selected Variables** | Northward sea water velocity, Sea surface height above geoid,  |
+| **Temporal Offset** | - |
+
+**Data Access**:
+```
+https://data.marine.copernicus.eu/product/GLOBAL_ANALYSISFORECAST_PHY_001_024
 ```
 
 ---

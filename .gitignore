@@ -10,3 +10,10 @@ datasets/
 inference_glory_results/
 inference_AF_results/
 __pycache__/
+PanoplyWin/
+.claude/
+.vscode/
+docs/
+rmse_analysis_results/
+CLAUDE.md
+normalization_stats.json

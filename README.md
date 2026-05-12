@@ -1,222 +1,201 @@
-# Ocean Data Sources
+# Pisces-Ocean
 
-This document describes all data sources used for ocean reconstruction model training and inference.
+English | **[简体中文](README_zh.md)**
 
-## Table of Contents
-- [Subsurface Data](#subsurface-data)
-  - [Deep Layer Background (7-day lag)](#1-deep-layer-background-7-day-lag)
-  - [GLORYS Reanalysis (Current)](#2-glorys-reanalysis-current)
-- [Surface Observations](#surface-observations)
-  - [Sea Level Anomaly (SLA)](#3-sea-level-anomaly-sla)
-  - [Surface Geostrophic Currents (Ugos/Vgos)](#4-surface-geostrophic-currents-ugosvgos)
-  - [Sea Surface Salinity (SSS)](#5-sea-surface-salinity-sss)
-  - [Sea Surface Temperature (SST)](#6-sea-surface-temperature-sst)
-- [Potential Data](#potential-data)
-  - [ANALYSIS FORECAST](#7-global-ocean-physics-analysis-and-forecast)
+A deep learning framework for 3D ocean subsurface reconstruction. Given satellite surface observations (SST, SSS) and a background forecast field, the model predicts the full 3D temperature and salinity profiles (20 depth levels) at the current time.
 
 ---
 
-## Subsurface Data
-
-### 1. Deep Layer Background (7-day lag)
-
-**Purpose**: Background subsurface fields from 7 days prior (used as input features)
-
-| Property | Value |
-|----------|-------|
-| **Full Name** | Global Ocean Physics Reanalysis |
-| **Product ID** | GLOBAL_MULTIYEAR_PHY_001_030 |
-| **datasets ID** | cmems_mod_glo_phy_my_0.083deg_P1D-m |
-| **Source** | Numerical models (GLORYS12V1) |
-| **Spatial Resolution** | 1/12° × 1/12° (0.083°) |
-| **Temporal Extent** | Jan 1993 - Dec 2025 |
-| **Processing Level** | L4 |
-| **Vertical Layers** | 80 depth levels |
-| **Selected Variables** | • Sea water potential temperature (thetao)<br>• Sea water salinity (so)<br>• Eastward sea water velocity (uo)<br>• Northward sea water velocity (vo) |
-| **Temporal Offset** | T - 7 days |
-
-**Data Access**:
-```
-https://data.marine.copernicus.eu/product/GLOBAL_MULTIYEAR_PHY_001_030/description
-```
+## Version
+v1.1, Released on May 12th, 2026
+- The data-loading and training pipeline was streamlined to facilitate data access, and the data were adapted to support multi-source input training.
 
 ---
 
-### 2. GLORYS Reanalysis (Current)
+## Overview
 
-**Purpose**: Ground truth subsurface fields at current time (used as labels)
+The model maps surface observations + a 1-day-lagged background forecast to the current 3D ocean state, trained against GLORYS reanalysis as ground truth.
 
-| Property | Value |
-|----------|-------|
-| **Full Name** | Global Ocean Physics Reanalysis |
-| **Product ID** | GLOBAL_MULTIYEAR_PHY_001_030 |
-| **datasets ID** | cmems_mod_glo_phy_my_0.083deg_P1D-m |
-| **Source** | Numerical models (GLORYS12V1) |
-| **Spatial Resolution** | 1/12° × 1/12° (0.083°) |
-| **Temporal Extent** | Jan 1993 - Dec 2025 |
-| **Processing Level** | L4 |
-| **Vertical Layers** | 80 depth levels |
-| **Selected Variables** | • Sea water potential temperature (thetao)<br>• Sea water salinity (so)<br>• Eastward sea water velocity (uo)<br>• Northward sea water velocity (vo) |
-| **Temporal Offset** | T (current time) |
+**Input (42 channels)**:
+- Sea Surface Salinity (SSS) — 1 channel (from AF surface field)
+- Sea Surface Temperature (SST) — 1 channel (from AF surface field)
+- Background temperature profile bg_t_3d (T − 1 day) — 20 channels
+- Background salinity profile bg_s_3d (T − 1 day) — 20 channels
 
-**Data Access**:
-```
-https://data.marine.copernicus.eu/product/GLOBAL_MULTIYEAR_PHY_001_030/description
-```
+**Output (40 channels)**:
+- Predicted temperature profile — 20 depth levels
+- Predicted salinity profile — 20 depth levels
+
+**Spatial domain**: 100°E–160°E, 0°N–50°N (0.083° resolution, 600×720 grid)
+
+**Temporal resolution**: Daily
+
+**Depth levels**: 20 selected from 80 available (0.49 m to ~644 m)
 
 ---
 
-## Surface Observations
+## Project Structure
 
-### 3. Sea Level Anomaly (SLA)
-
-**Purpose**: Surface observation input feature
-
-| Property | Value |
-|----------|-------|
-| **Full Name** | Global Ocean Gridded L4 Sea Surface Heights And Derived Variables NRT |
-| **Product ID** | SEALEVEL_GLO_PHY_L4_NRT_008_046 |
-| **datasets ID（daily）** | cmems_obs-sl_glo_phy-ssh_nrt_allsat-l4-duacs-0.125deg_P1D |
-| **Source** | Satellite observations (multi-mission altimetry) |
-| **Spatial Resolution** | 1/8° × 1/8° (0.125°) |
-| **Temporal Extent** | Oct 2022 - Jan 2026 |
-| **Processing Level** | L4 |
-| **Vertical Layers** | 1 (surface only) |
-| **Selected Variables** | • Sea surface height above geoid (sla) |
-| **Temporal Offset** | T (current time) |
-
-**Data Access**:
 ```
-https://data.marine.copernicus.eu/product/SEALEVEL_GLO_PHY_L4_NRT_008_046/description
+Pisces-Ocean/
+├── train.py                    # Training pipeline
+├── inference.py                # Inference and evaluation
+├── load_datasets.py            # NetCDF data loading
+├── Data_Config.py              # Data source configuration
+├── models/
+│   ├── simple_convnext_net.py  # ConvNeXt U-Net (primary model)
+│   ├── unet.py                 # Standard U-Net
+│   ├── unet3d.py               # 3D U-Net
+│   ├── HCANet.py               # Hybrid Conv-Attention Net
+│   └── mymodel.py              # Simple baseline
+├── download_utils/             # Data download scripts
+│   ├── download_glorys.py
+│   ├── download_analysis_forecast_thetao.py
+│   ├── download_analysis_forecast_so.py
+│   ├── download_analysis_forecast_thetao_surface.py
+│   ├── download_analysis_forecast_so_surface.py
+│   ├── download_OISST_SST.py
+│   ├── download_OSTIA_SST.py
+│   ├── download_multiobs_sss.py
+│   ├── download_glorys_sst_surface.py
+│   └── download_glorys_sss_surface.py
+├── visualize_results_glory.py  # Result visualization
+├── visualize_depth.py          # Depth profile visualization
+├── analyze_glorys_af_rmse.py   # RMSE analysis
+├── rmse_matrix.py              # RMSE matrix
+├── read_nc_file.py             # NetCDF inspection utility
+├── compare_nc.py               # NetCDF comparison utility
+└── logs/                       # Training logs and checkpoints
 ```
 
 ---
 
-### 4. Surface Geostrophic Currents (Ugos/Vgos)
+## Model Architecture
 
-**Purpose**: Surface observation input feature (derived from altimetry)
+The primary model ([models/simple_convnext_net.py](models/simple_convnext_net.py)) is a **ConvNeXt-based U-Net**:
 
-| Property | Value |
-|----------|-------|
-| **Full Name** | Global Ocean Gridded L4 Sea Surface Heights And Derived Variables NRT |
-| **Product ID** | SEALEVEL_GLO_PHY_L4_NRT_008_046 |
-| **datasets ID（daily）** | cmems_obs-sl_glo_phy-ssh_nrt_allsat-l4-duacs-0.125deg_P1D |
-| **Source** | Satellite observations (derived from altimetry) |
-| **Spatial Resolution** | 1/8° × 1/8° (0.125°) |
-| **Temporal Extent** | Oct 2022 - Jan 2026 |
-| **Processing Level** | L4 |
-| **Vertical Layers** | 1 (surface only) |
-| **Selected Variables** | • Surface geostrophic eastward velocity (ugos)<br>• Surface geostrophic northward velocity (vgos) |
-| **Temporal Offset** | T (current time) |
-
-**Data Access**:
 ```
-https://data.marine.copernicus.eu/product/SEALEVEL_GLO_PHY_L4_NRT_008_046/description
+Input (42ch)
+    │
+    ▼
+proj_in: Conv2d → 64ch
+    │
+    ├── stage1 (ConvNeXt Block, 64ch) ──────────────────────────┐ skip
+    │       ↓ down1 (stride=2)                                  │
+    ├── stage2 (ConvNeXt Block, 128ch) ─────────────────┐ skip  │
+    │       ↓ down2 (stride=2)                          │       │
+    ├── stage3 (Bottleneck, 256ch × 2 blocks)           │       │
+    │       ↓ up1 (bilinear ×2)                         │       │
+    ├── fusion1 + stage4 (128ch) ←──────────────────────┘       │
+    │       ↓ up2 (bilinear ×2)                                 │
+    └── fusion2 + stage5 (64ch) ←───────────────────────────────┘
+            │
+            ├── head_temp → 20ch（温度）
+            └── head_salt → 20ch（盐度）
+                    │
+                    ▼
+             Output (40ch)
+```
+
+ConvNeXt Block: Depthwise Conv 7×7 → LayerNorm → Linear → GELU → Linear + Layer Scale + DropPath
+
+---
+
+## Data Sources
+
+| Variable | Product | Resolution | Source |
+|---|---|---|---|
+| Ground truth thetao/so (labels) | GLORYS `GLOBAL_MULTIYEAR_PHY_001_030` | 1/12° | Copernicus Marine |
+| Background forecast thetao/so | AF `GLOBAL_ANALYSISFORECAST_PHY_001_024` | 1/12° | Copernicus Marine |
+| Surface temperature SST | AF `GLOBAL_ANALYSISFORECAST_PHY_001_024` (surface) | 1/12° | Copernicus Marine |
+| Surface salinity SSS | AF `GLOBAL_ANALYSISFORECAST_PHY_001_024` (surface) | 1/12° | Copernicus Marine |
+
+> Data access requires a [Copernicus Marine](https://marine.copernicus.eu/) account and the `copernicusmarine` Python client.
+
+---
+
+## Setup
+
+```bash
+pip install torch numpy xarray netCDF4 copernicusmarine matplotlib timm tqdm
+```
+
+Configure the data path in [Data_Config.py](Data_Config.py):
+
+```python
+RAW_DATASET_PATH = r"/path/to/datasets"
+```
+
+Expected dataset directory structure:
+
+```
+datasets/
+├── Glorys_thetao_0.083deg/
+│   └── YYYYMMDD.nc
+├── Glorys_so_0.083deg/
+│   └── YYYYMMDD.nc
+├── AF_thetao_0.083deg/
+│   └── YYYYMMDD.nc
+├── AF_so_0.083deg/
+│   └── YYYYMMDD.nc
+├── AF_thetao_surface_0.083deg/
+│   └── YYYYMMDD.nc
+└── AF_so_surface_0.083deg/
+    └── YYYYMMDD.nc
 ```
 
 ---
 
-### 5. Sea Surface Salinity (SSS)
+## Usage
 
-**Purpose**: Surface observation input feature
+### 1. Download Data
 
-| Property | Value |
-|----------|-------|
-| **Full Name** | Multi Observation Global Ocean Sea Surface Salinity and Sea Surface Density |
-| **Product ID** | MULTIOBS_GLO_PHY_S_SURFACE_MYNRT_015_013 |
-| **datasets ID（daily）** | cmems_obs-mob_glo_phy-sss_nrt_multi_P1D |
-| **Source** | In-situ observations & Satellite observations (SMOS, SMAP) |
-| **Spatial Resolution** | 1/8° × 1/8° (0.125°) |
-| **Temporal Extent** | Jan 1993 - Jan 2026 |
-| **Processing Level** | L4 |
-| **Vertical Layers** | 1 (surface only) |
-| **Selected Variables** | • Sea surface salinity (sos) |
-| **Temporal Offset** | T (current time) |
-
-**Data Access**:
+```bash
+python download_utils/download_glorys.py
+python download_utils/download_analysis_forecast_thetao.py
+python download_utils/download_analysis_forecast_so.py
+python download_utils/download_analysis_forecast_thetao_surface.py
+python download_utils/download_analysis_forecast_so_surface.py
 ```
-https://data.marine.copernicus.eu/product/MULTIOBS_GLO_PHY_S_SURFACE_MYNRT_015_013/description
+
+### 2. Train
+
+```bash
+python train.py
 ```
+
+Training configuration (edit in [train.py](train.py)):
+
+| Parameter | Value |
+|---|---|
+| Training period | 2021-01-08 ~ 2024-12-31 |
+| Validation period | 2025-01-01 ~ 2025-12-31 |
+| Optimizer | Adam, lr=5e-5, weight_decay=1e-5 |
+| Scheduler | ReduceLROnPlateau (factor=0.5, patience=5) |
+| Loss | 0.9 × MSE(temp) + 0.1 × MSE(salt) |
+| Epochs | 50 |
+| Batch size | 1 |
+| Normalization | Z-score (stats computed from training set and cached) |
+
+Checkpoints and loss curves are saved to `logs/<run_id>/`. Resume training by setting `resume_dir` to an existing log directory.
+
+### 3. Inference
+
+```bash
+python inference.py --date 20260202 --model_path logs/<run_id>/best_model.pth
+```
+
+Outputs:
+- Prediction NetCDF files (`inference_glory_results/`)
+- RMSE / MAE / Pearson correlation per depth level
+- Comparison metrics: model prediction vs background vs ground truth
+- HTML visualization report
 
 ---
 
-### 6. Sea Surface Temperature (SST)
+## Training Details
 
-**Purpose**: Surface observation input feature
-
-| Property | Value |
-|----------|-------|
-| **Full Name** | NOAA Optimum Interpolation Sea Surface Temperature (OISST) V2.1 |
-| **Product ID** | sea-surface-temperature-optimum-interpolation/v2.1/access/avhrr |
-| **datasets ID（daily）** | cmems_obs-mob_glo_phy-sss_nrt_multi_P1D |
-| **Source** | Satellite observations (AVHRR) |
-| **Spatial Resolution** | 1/4° × 1/4° (0.25°) |
-| **Temporal Extent** | Sept 1981 - Jan 2026 |
-| **Processing Level** | L4 |
-| **Vertical Layers** | 1 (surface only) |
-| **Selected Variables** | • Sea surface temperature (sst) |
-| **Temporal Offset** | T (current time) |
-
-**Data Access**:
-```
-https://www.ncei.noaa.gov/data/sea-surface-temperature-optimum-interpolation/v2.1/access/avhrr/
-```
-
----
-
-## Potential Data
-
-### 7. Global Ocean Physics Analysis and Forecast
-
-**Purpose**: Surface observation input feature
-
-| Property | Value |
-|----------|-------|
-| **Full Name** | Global Ocean Physics Analysis and Forecast |
-| **Product ID** | GLOBAL_ANALYSISFORECAST_PHY_001_024 |
-| **datasets ID（daily）** | cmems_mod_glo_phy_anfc_0.083deg_P1D-m |
-| **Source** | Numerical models |
-| **Spatial Resolution** | 1/12° × 1/12° (0.083°) |
-| **Temporal Extent** | 1 Nov 2020 to 24 Apr 2026 |
-| **Processing Level** | L4 |
-| **Vertical Layers** | 50 |
-| **Selected Variables** | Northward sea water velocity, Sea surface height above geoid,  |
-| **Temporal Offset** | - |
-
-**Data Access**:
-```
-https://data.marine.copernicus.eu/product/GLOBAL_ANALYSISFORECAST_PHY_001_024
-```
-
----
-
-## Data Usage Summary
-
-### Input Features (Model Inputs)
-1. **Surface observations** (T = current time):
-   - SST (1 channel)
-   - SSS (1 channel)
-   - SLA (1 channel)
-   - Ugos/Vgos (2 channels) - *optional*
-
-2. **Background subsurface** (T - 7 days):
-   - Temperature profile (20 depth levels)
-   - Salinity profile (20 depth levels)
-
-**Total input channels**: 3 + 20 + 20 = **43 channels** (or 45 with currents)
-
-### Target Labels (Model Outputs)
-- **GLORYS subsurface** (T = current time):
-  - Temperature profile (20 depth levels)
-  - Salinity profile (20 depth levels)
-
-**Total output channels**: 20 + 20 = **40 channels**
-
----
-
-## Notes
-
-- All datasets are regridded to a common spatial grid (100°E-160°E, 0°N-50°N)
-- Depth levels are subsampled from 80 to 20 levels for computational efficiency
-- L4 processing level indicates gap-filled products
-- Temporal offset "T - 7 days" means the background field is from 7 days before the target date
+- **Normalization**: Z-score per variable; statistics are computed from the training set on first run and cached as `normalization_stats.json`
+- **NaN handling**: Land and missing-data regions are excluded via mask and do not contribute to the loss
+- **Loss function**: Weighted MSE — temperature weight 0.9, salinity weight 0.1
+- **Baseline comparison**: Background field loss is computed alongside model loss during validation to measure improvement over the background

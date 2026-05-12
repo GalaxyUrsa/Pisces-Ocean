@@ -117,9 +117,15 @@ def create_vertical_profile_plots(pred_ds, target_ds, bg_ds, save_dir, date_str,
     lons   = pred_ds.longitude.values
     depths = pred_ds.depth.values[depth_indices]
 
-    # Find nearest grid indices; skip points with no valid data
+    # Find nearest grid indices; skip points outside domain or with no valid data
+    lat_min, lat_max = lats[0], lats[-1]
+    lon_min, lon_max = lons[0], lons[-1]
     valid_points = []
     for lat_val, lon_val in profile_coords:
+        if not (lat_min <= lat_val <= lat_max and lon_min <= lon_val <= lon_max):
+            print(f"  Skipping point ({lat_val}, {lon_val}): outside domain "
+                  f"[{lat_min:.2f}–{lat_max:.2f}°N, {lon_min:.2f}–{lon_max:.2f}°E]")
+            continue
         lat_idx = int(np.argmin(np.abs(lats - lat_val)))
         lon_idx = int(np.argmin(np.abs(lons - lon_val)))
         profile = pred_ds['thetao'].isel(time=0, latitude=lat_idx,

@@ -17,8 +17,8 @@ USERNAME, PASSWORD = load_credentials()
 # water potential temperatureSea water potential temperature at sea floorSea water salinity
 
 # Dataset configuration（保持原样）
-dataset_id = "cmems_mod_glo_phy-so_anfc_0.083deg_P1D-m"
-variables = ["so"]
+dataset_id = "cmems_mod_glo_phy-thetao_anfc_0.083deg_P1D-m"
+variables = ["thetao"]
 
 # Spatial domain（保持原样）
 minimum_longitude = 100
@@ -27,16 +27,18 @@ minimum_latitude = 0
 maximum_latitude = 49.99
 
 # Output directory（保持原样）
-output_dir = r"D:\datasets\AF_so"
+output_dir = r"D:\datasets\AF_thetao_surface"
 os.makedirs(output_dir, exist_ok=True)
 
 # Depth range（保持原样）
 minimum_depth = 0.49402499198913574
-maximum_depth = 651
+maximum_depth = 0.51
+# maximum_depth = 651
 
 # Time range（保持原样）
 start_date = "2023-01-01"
 end_date = "2025-12-31"
+
 
 def download_daily_data(start_date_str, end_date_str):
     """Download GLORYS data day by day."""
@@ -53,7 +55,7 @@ def download_daily_data(start_date_str, end_date_str):
         day_start = f"{current_day.strftime('%Y-%m-%d')}T00:00:00"
         day_end = f"{current_day.strftime('%Y-%m-%d')}T23:59:59"
         
-        output_file = os.path.join(output_dir, f"AF_so_0.083deg_{day_str}.nc")
+        output_file = os.path.join(output_dir, f"AF_thetao_0.083deg_{day_str}.nc")
 
         if os.path.exists(output_file):
             print(f"[SKIP] {day_str}: File already exists")

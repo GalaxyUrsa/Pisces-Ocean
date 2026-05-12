@@ -11,41 +11,14 @@ import os
 from datetime import date, datetime, timedelta
 matplotlib.use('Agg')  # 使用非交互式后端
 
+from Data_Config import SURFACE_VARS, _SURFACE_INDEX, data_index, CROP_ROW_START, CROP_ROW_END, CROP_COL_START, CROP_COL_END
+
 # from models.mymodel import SimpleModel as mymodel
 # from models.unet import UNet as mymodel
 # from models.HCANet import HCANet as mymodel
 # from models.unet3d import UNet3D as mymodel
 from models.simple_convnext_net import ConvNeXtUNet as mymodel
-
-# =============================================================================
-# 消融实验配置 — 只需修改这里，注释掉对应行即可去掉该变量
-# =============================================================================
-SURFACE_VARS = [
-    'sss',  # Sea Surface Salinity
-    'sst',  # Sea Surface Temperature
-    # 'sla',  # Sea Level Anomaly
-    # 'ugos',
-    # 'vgos',
-]
-
-# 数据索引（自动推导，无需手动修改）
-_SURFACE_INDEX = {
-    'sss':  ['SSS', 'so',  'sss'],
-    'sst':  ['SST', 'thetao',  'sst'],
-    'sla':  ['SLA', 'sla',  'sla'],
-    'ugos': ['SLA', 'ugos', 'ugos'],
-    'vgos': ['SLA', 'vgos', 'vgos'],
-}
-
-data_index = (
-    [_SURFACE_INDEX[v] for v in SURFACE_VARS] +
-    [
-        ['Glorys',     'thetao', 'label_t_3d'],
-        ['Glorys',     'so',     'label_s_3d'],
-        ['Background', 'thetao', 'bg_t_3d'],
-        ['Background', 'so',     'bg_s_3d'],
-    ]
-)
+# from models.simple_convnext_net_0429 import ConvNeXtUNet as mymodel
 
 IN_CHANNELS = len(SURFACE_VARS) + 40  # surface vars + bg_t_3d(20) + bg_s_3d(20)
 
@@ -89,12 +62,10 @@ def compute_normalization_stats(date_list, dataloader, save_path='normalization_
 
     # 遍历所有训练样本
     for date in tqdm(date_list, desc="Processing samples"):
-        raw_data = dataloader.load_single_date(date, isLog=False)
+        raw_data = dataloader.load_single_date(date, data_index, isLog=False)
 
-        # 扁平化数据
-        data = {}
-        for folder, var, name in data_index:
-            data[name] = raw_data[folder][var]
+        # raw_data is already a flat {output_name: array} dict
+        data = raw_data
 
         # 对每个变量计算统计量
         for var in var_names:
@@ -206,12 +177,10 @@ class OceanDataset(Dataset):
         date = self.date_list[idx]
 
         # 加载单个日期的数据
-        raw_data = self.dataloader.load_single_date(date, isLog=False)
+        raw_data = self.dataloader.load_single_date(date, data_index, isLog=False)
 
-        # 扁平化数据
-        data = {}
-        for folder, var, name in data_index:
-            data[name] = raw_data[folder][var]
+        # raw_data is already a flat {output_name: array} dict
+        data = raw_data
 
         # 对每个变量进行归一化（在处理NaN之前）
         if self.norm_stats is not None:
@@ -227,7 +196,7 @@ class OceanDataset(Dataset):
             [np.expand_dims(data[v], axis=0) for v in SURFACE_VARS] +
             [data['bg_t_3d'], data['bg_s_3d']],
             axis=0
-        ).astype(np.float32)  # (IN_CHANNELS, 400, 480)
+        ).astype(np.float32)  # (IN_CHANNELS, H, W)
 
         # 构建标签：label_t_3d(20,400,480) + label_s_3d(20,400,480)
         # 总共: 20 + 20 = 40 个通道
@@ -236,8 +205,16 @@ class OceanDataset(Dataset):
             data['label_s_3d']                        # (20, 400, 480)
         ], axis=0).astype(np.float32)                 # (40, 400, 480)
 
-        # 创建mask（用于处理NaN值）
+        # # 创建mask（用于处理NaN值）：在通道维度取 all，得到 (H, W) 再扩展回 (40, H, W)
+        # mask_1 = ~np.isnan(labels)   # (40, H, W)
+        # mask_2 = (~np.isnan(inputs)).all(axis=0, keepdims=True)  # (1, H, W)
+        # mask = mask_1 & mask_2       # broadcast → (40, H, W)
         mask = ~np.isnan(labels)
+
+        # 裁剪到南中国海区域 (C, H, W) → (C, 200, 240)
+        inputs = inputs[:, CROP_ROW_START:CROP_ROW_END, CROP_COL_START:CROP_COL_END]
+        labels = labels[:, CROP_ROW_START:CROP_ROW_END, CROP_COL_START:CROP_COL_END]
+        mask   = mask[:,   CROP_ROW_START:CROP_ROW_END, CROP_COL_START:CROP_COL_END]
 
         # 将NaN替换为0
         inputs = np.nan_to_num(inputs, nan=0.0)
@@ -246,41 +223,44 @@ class OceanDataset(Dataset):
         return torch.from_numpy(inputs), torch.from_numpy(labels), torch.from_numpy(mask.astype(np.float32))
 
 
-def train_epoch(model, dataloader, optimizer, device):
-    """训练一个epoch"""
+def train_epoch(model, dataloader, optimizer, device, accum_steps=1):
+    """训练一个epoch，支持梯度累积（accum_steps>1 模拟更大 batch size）"""
     model.train()
     total_loss = 0.0
+    optimizer.zero_grad()
 
     pbar = tqdm(dataloader, desc='Training')
-    for inputs, targets, masks in pbar:
+    for step, (inputs, targets, masks) in enumerate(pbar):
         inputs = inputs.to(device)
         targets = targets.to(device)
         masks = masks.to(device)
 
-        # 前向传播
+        # 前向传播，损失除以累积步数以保持梯度量级一致
         outputs = model(inputs)
-
-        # 计算损失（只在有效区域，masked mean）
-        # loss = ((outputs - targets) ** 2 * masks).sum() / masks.sum().clamp(min=1)
-        loss = Hybrid_loss(outputs, targets, masks)
-
-        # 反向传播
-        optimizer.zero_grad()
+        loss = Hybrid_loss(outputs, targets, masks) / accum_steps
         loss.backward()
-        optimizer.step()
 
-        total_loss += loss.item()
+        total_loss += loss.item() * accum_steps  # 还原为真实损失值记录
+
+        # 每 accum_steps 步或最后一个 step 才更新参数
+        if (step + 1) % accum_steps == 0 or (step + 1) == len(dataloader):
+            optimizer.step()
+            optimizer.zero_grad()
 
         # 更新进度条
-        pbar.set_postfix({'loss': f"{loss.item():.6f}"})
+        pbar.set_postfix({'loss': f"{loss.item() * accum_steps:.6f}"})
 
     return total_loss / len(dataloader)
 
 
 def validate_epoch(model, dataloader, device):
-    """验证一个epoch"""
+    """验证一个epoch，同时计算 pred loss 和 bg baseline loss"""
     model.eval()
     total_loss = 0.0
+    total_bg_loss = 0.0
+
+    # bg 在输入中的通道索引：surface_vars 之后的前20通道是 bg_t_3d，接着20通道是 bg_s_3d
+    n_surface = len(SURFACE_VARS)
 
     with torch.no_grad():
         pbar = tqdm(dataloader, desc='Validation')
@@ -292,25 +272,29 @@ def validate_epoch(model, dataloader, device):
             # 前向传播
             outputs = model(inputs)
 
-            # 计算损失（只在有效区域，masked mean）
-            # loss = ((outputs - targets) ** 2 * masks).sum() / masks.sum().clamp(min=1)
+            # 计算 pred loss
             loss = Hybrid_loss(outputs, targets, masks)
-
             total_loss += loss.item()
 
-            # 更新进度条
-            pbar.set_postfix({'loss': f"{loss.item():.6f}"})
+            # 计算 bg baseline loss（bg 直接作为预测）
+            bg = inputs[:, n_surface:n_surface + 40]  # (B, 40, H, W)
+            bg_loss = Hybrid_loss(bg, targets, masks)
+            total_bg_loss += bg_loss.item()
 
-    return total_loss / len(dataloader)
+            pbar.set_postfix({'pred': f"{loss.item():.6f}", 'bg': f"{bg_loss.item():.6f}"})
+
+    return total_loss / len(dataloader), total_bg_loss / len(dataloader)
 
 
-def plot_loss_curves(train_losses, val_losses, save_path='loss_curve.png'):
+def plot_loss_curves(train_losses, val_losses, save_path='loss_curve.png', bg_losses=None):
     """绘制训练和验证损失曲线"""
     plt.figure(figsize=(10, 6))
     epochs = range(1, len(train_losses) + 1)
 
     plt.plot(epochs, train_losses, 'b-', label='Training Loss', linewidth=2)
     plt.plot(epochs, val_losses, 'r-', label='Validation Loss', linewidth=2)
+    if bg_losses:
+        plt.plot(epochs, bg_losses, 'g--', label='BG Baseline Loss', linewidth=2)
 
     plt.xlabel('Epoch', fontsize=12)
     plt.ylabel('Loss', fontsize=12)
@@ -333,9 +317,15 @@ def plot_loss_curves(train_losses, val_losses, save_path='loss_curve.png'):
     # 同时保存为CSV
     csv_path = save_path.replace('.png', '.csv')
     with open(csv_path, 'w') as f:
-        f.write('epoch,train_loss,val_loss\n')
+        header = 'epoch,train_loss,val_loss'
+        if bg_losses:
+            header += ',bg_loss'
+        f.write(header + '\n')
         for i, (train_loss, val_loss) in enumerate(zip(train_losses, val_losses), 1):
-            f.write(f'{i},{train_loss:.8f},{val_loss:.8f}\n')
+            row = f'{i},{train_loss:.8f},{val_loss:.8f}'
+            if bg_losses:
+                row += f',{bg_losses[i-1]:.8f}'
+            f.write(row + '\n')
     print(f"Loss data saved to: {csv_path}")
 
 
@@ -351,12 +341,20 @@ if __name__=="__main__":
     num_epochs = 50
     learning_rate = 5e-5
     num_workers = 8
+    accum_steps = 1  # 梯度累积步数，等效 batch size = batch_size * accum_steps
 
-    # 创建本次训练的 log 目录
-    run_id = datetime.now().strftime('%Y%m%d_%H%M%S')
-    log_dir = os.path.join('logs', run_id)
-    os.makedirs(log_dir, exist_ok=True)
-    print(f"Log directory: {log_dir}")
+    # 断点续训：设置为已有的 log 目录路径（如 'logs/20250507_120000'），None 表示从头训练
+    resume_dir = None
+
+    # 创建或恢复 log 目录
+    if resume_dir is not None:
+        log_dir = resume_dir
+        print(f"Resuming from: {log_dir}")
+    else:
+        run_id = datetime.now().strftime('%Y%m%d_%H%M%S')
+        log_dir = os.path.join('logs', run_id)
+        os.makedirs(log_dir, exist_ok=True)
+        print(f"Log directory: {log_dir}")
 
     # 归一化参数
     use_normalization = True  # 是否使用归一化
@@ -465,29 +463,51 @@ if __name__=="__main__":
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
 
     # -------------------------------------------------------------------------------------------------
+    # 断点续训：加载 checkpoint
+    # -------------------------------------------------------------------------------------------------
+    start_epoch = 0
+    best_val_loss = float('inf')
+    train_loss_history = []
+    val_loss_history = []
+    bg_loss_history = []
+
+    last_ckpt_path = os.path.join(log_dir, 'last_checkpoint.pth')
+    if resume_dir is not None and os.path.exists(last_ckpt_path):
+        print(f"\nLoading checkpoint: {last_ckpt_path}")
+        ckpt = torch.load(last_ckpt_path, map_location=device)
+        model.load_state_dict(ckpt['model_state_dict'])
+        optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+        scheduler.load_state_dict(ckpt['scheduler_state_dict'])
+        start_epoch = ckpt['epoch'] + 1
+        best_val_loss = ckpt['best_val_loss']
+        train_loss_history = ckpt['train_loss_history']
+        val_loss_history = ckpt['val_loss_history']
+        bg_loss_history = ckpt.get('bg_loss_history', [])
+        print(f"Resumed from epoch {ckpt['epoch'] + 1}, best_val_loss={best_val_loss:.6f}")
+    elif resume_dir is not None:
+        print(f"Warning: resume_dir set but no checkpoint found at {last_ckpt_path}, starting from scratch.")
+
+    # -------------------------------------------------------------------------------------------------
     # 训练循环
     # -------------------------------------------------------------------------------------
     print("\n" + "="*60)
     print("Starting training...")
     print("="*60)
 
-    best_val_loss = float('inf')
-    train_loss_history = []
-    val_loss_history = []
-
-    for epoch in range(num_epochs):
+    for epoch in range(start_epoch, num_epochs):
         print(f"\nEpoch {epoch + 1}/{num_epochs}")
         print(f"Learning rate: {optimizer.param_groups[0]['lr']:.2e}")
 
         # 训练
-        train_loss = train_epoch(model, train_loader, optimizer, device)
+        train_loss = train_epoch(model, train_loader, optimizer, device, accum_steps)
         print(f"Train Loss: {train_loss:.6f}")
         train_loss_history.append(train_loss)
 
         # 验证
-        val_loss = validate_epoch(model, val_loader, device)
-        print(f"Val Loss: {val_loss:.6f}")
+        val_loss, bg_loss = validate_epoch(model, val_loader, device)
+        print(f"Val Loss: {val_loss:.6f}  |  BG Baseline: {bg_loss:.6f}  |  Ratio: {val_loss/bg_loss:.4f}")
         val_loss_history.append(val_loss)
+        bg_loss_history.append(bg_loss)
 
         # 更新学习率
         scheduler.step(val_loss)
@@ -504,8 +524,21 @@ if __name__=="__main__":
             }, os.path.join(log_dir, 'best_model.pth'))
             print(f"✓ Best model saved! Val Loss: {val_loss:.6f}")
 
+        # 每个epoch保存断点（用于续训）
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict(),
+            'best_val_loss': best_val_loss,
+            'train_loss_history': train_loss_history,
+            'val_loss_history': val_loss_history,
+            'bg_loss_history': bg_loss_history,
+            'norm_stats': norm_stats,
+        }, last_ckpt_path)
+
         # 每个epoch后绘制损失曲线
-        plot_loss_curves(train_loss_history, val_loss_history, os.path.join(log_dir, 'loss_curve.png'))
+        plot_loss_curves(train_loss_history, val_loss_history, os.path.join(log_dir, 'loss_curve.png'), bg_loss_history)
 
     print("\n" + "="*60)
     print("Training completed!")

@@ -27,12 +27,13 @@ minimum_latitude = 0
 maximum_latitude = 49.99
 
 # Output directory（保持原样）
-output_dir = r"D:\datasets\AF_so"
+output_dir = r"D:\datasets\AF_so_surface"
 os.makedirs(output_dir, exist_ok=True)
 
 # Depth range（保持原样）
 minimum_depth = 0.49402499198913574
-maximum_depth = 651
+maximum_depth = 0.51
+# maximum_depth = 651
 
 # Time range（保持原样）
 start_date = "2023-01-01"
