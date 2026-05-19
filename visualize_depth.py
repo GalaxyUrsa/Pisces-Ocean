@@ -9,7 +9,8 @@ all_depths = ds['depth'].values
 np.set_printoptions(suppress=True)
 
 # 选取的20层索引
-DEPTH_INDICES = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 21, 22, 23, 24, 25, 26, 28, 30, 32]
+# DEPTH_INDICES = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 21, 22, 23, 24, 25, 26, 28, 30, 32]
+DEPTH_INDICES = [0, 7, 11, 14, 16, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
 depth_values = all_depths[DEPTH_INDICES]
 
 # 计算每个选中层的厚度：覆盖到与相邻选中层的中点

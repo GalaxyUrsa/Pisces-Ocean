@@ -5,11 +5,15 @@ Loads NetCDF data driven by a data_index defined in train.py.
 Each entry in data_index is a triple: [folder, variable, output_name].
 """
 
+import re
 from typing import Dict, List, Tuple
 from datetime import datetime, timedelta
 import numpy as np
 import xarray as xr
 from pathlib import Path
+
+
+_DATE_RE = re.compile(r'(\d{8})')
 
 
 class OceanDatasetLoader:
@@ -19,7 +23,25 @@ class OceanDatasetLoader:
         self.base_path = Path(base_path)
 
         # Depth indices to select for 3D variables (20 levels out of 33)
-        self.depth_indices = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 21, 22, 23, 24, 25, 26, 28, 30, 32]
+        # self.depth_indices = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 21, 22, 23, 24, 25, 26, 28, 30, 32]
+        self.depth_indices = [0, 7, 11, 14, 16, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
+
+        # 每个 folder 第一次访问时建立 {YYYYMMDD: Path} 索引，后续 O(1) 查询。
+        self._folder_index: Dict[str, Dict[str, Path]] = {}
+
+    def _get_folder_index(self, folder: str) -> Dict[str, Path]:
+        idx = self._folder_index.get(folder)
+        if idx is not None:
+            return idx
+        folder_path = self.base_path / folder
+        idx = {}
+        if folder_path.exists():
+            for f in folder_path.glob("*.nc"):
+                m = _DATE_RE.search(f.name)
+                if m:
+                    idx[m.group(1)] = f
+        self._folder_index[folder] = idx
+        return idx
 
     def load_single_file(self, file_path: Path, variables: List[str],
                          lon_slice: Tuple[float, float] = (105, 125),
@@ -100,14 +122,8 @@ class OceanDatasetLoader:
         for cache_key, vars_needed in key_vars.items():
             folder, lookup_date, select_depth = cache_key
             try:
-                folder_path = self.base_path / folder
-                files = sorted(folder_path.glob("*.nc"))
-
-                matching_file = None
-                for f in files:
-                    if lookup_date in f.name:
-                        matching_file = f
-                        break
+                folder_idx = self._get_folder_index(folder)
+                matching_file = folder_idx.get(lookup_date)
 
                 if matching_file is None:
                     if isLog:

@@ -19,7 +19,7 @@ from datetime import datetime
 from load_datasets import OceanDatasetLoader
 from visualize_results_glory import visualize_glory_results
 
-from Data_Config import SURFACE_VARS, _SURFACE_INDEX, data_index, RAW_DATASET_PATH, CROP_ROW_START, CROP_ROW_END, CROP_COL_START, CROP_COL_END
+from Data_Config import SURFACE_VARS, _SURFACE_INDEX, data_index, RAW_DATASET_PATH, CROP_ROW_START, CROP_ROW_END, CROP_COL_START, CROP_COL_END, NAN_FILL_VALUE
 
 # =============================================================================
 # Model Import
@@ -128,7 +128,7 @@ def prepare_input(raw_data, norm_stats=None) -> torch.Tensor:
 
     inputs = np.concatenate(channels, axis=0).astype(np.float32)  # (IN_CHANNELS, H, W)
     inputs = inputs[:, CROP_ROW_START:CROP_ROW_END, CROP_COL_START:CROP_COL_END]
-    inputs = np.nan_to_num(inputs, nan=0.0)
+    inputs = np.nan_to_num(inputs, nan=NAN_FILL_VALUE)
     return torch.from_numpy(inputs)
 
 # =============================================================================
@@ -276,8 +276,8 @@ def print_metrics_table(metrics, temp_metrics, salt_metrics,
 
 def main():
     parser = argparse.ArgumentParser(description='Ocean Reconstruction Inference')
-    parser.add_argument('--model_path', type=str, default='./logs/20260511_112905/best_model.pth', help='Path to trained model checkpoint')
-    parser.add_argument('--date', type=str, default='20251220', help='Inference date (YYYYMMDD)')
+    parser.add_argument('--model_path', type=str, default='./logs/20260519_113743_finetune/best_model.pth', help='Path to trained model checkpoint')
+    parser.add_argument('--date', type=str, default='20250601', help='Inference date (YYYYMMDD)')
     parser.add_argument('--save_dir', type=str, default='./inference_glory_results', help='Root directory to save results')
     parser.add_argument('--device', type=str, default='cuda', help='Device: cuda or cpu')
     parser.add_argument('--profile_coords', type=str, default="12.5,115; 25.0,130.0; 37.5,145; 20.0,120.0; 30.0,135.0", 
@@ -323,19 +323,9 @@ def main():
     with torch.no_grad():
         outputs = model(inputs)
 
-    # Transform Tensor to Numpy
-    pred_norm = outputs.squeeze(0).cpu().numpy()  # (40, H, W)
-
-    # Denormalise
-    if norm_stats is not None:
-        print("\nDenormalising predictions...")
-        # Gary
-        # the normalization states is strange
-        pred_temp = denormalize_data(torch.from_numpy(pred_norm[:20]), 'label_t_3d', norm_stats).numpy()
-        pred_salt = denormalize_data(torch.from_numpy(pred_norm[20:]), 'label_s_3d', norm_stats).numpy()
-        prediction = np.concatenate([pred_temp, pred_salt], axis=0)
-    else:
-        prediction = pred_norm
+    # 模型输出物理量纲的残差，pred = bg + residual
+    residual = outputs.squeeze(0).cpu().numpy()  # (40, H, W)
+    prediction = background + residual
 
     # # ---------------------------------------------------------------------------
     # # 温度逐格点异常值过滤：

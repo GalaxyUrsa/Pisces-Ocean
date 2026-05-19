@@ -11,7 +11,7 @@ import os
 from datetime import date, datetime, timedelta
 matplotlib.use('Agg')  # 使用非交互式后端
 
-from Data_Config import SURFACE_VARS, _SURFACE_INDEX, data_index, CROP_ROW_START, CROP_ROW_END, CROP_COL_START, CROP_COL_END
+from Data_Config import SURFACE_VARS, _SURFACE_INDEX, data_index, RAW_DATASET_PATH, CROP_ROW_START, CROP_ROW_END, CROP_COL_START, CROP_COL_END, NAN_FILL_VALUE
 
 # from models.mymodel import SimpleModel as mymodel
 # from models.unet import UNet as mymodel
@@ -23,11 +23,19 @@ from models.simple_convnext_net import ConvNeXtUNet as mymodel
 IN_CHANNELS = len(SURFACE_VARS) + 40  # surface vars + bg_t_3d(20) + bg_s_3d(20)
 
 
-def Hybrid_loss(targets, outputs, masks, temp_weight=0.9, salt_weight=0.1):
-    # temperature loss
-    temp_loss = ((outputs[:, :20] - targets[:, :20]) ** 2 * masks[:, :20]).sum() / masks[:, :20].sum().clamp(min=1)
-    # salinity loss
-    salinity_loss = ((outputs[:, 20:40] - targets[:, 20:40]) ** 2 * masks[:, 20:40]).sum() / masks[:, 20:40].sum().clamp(min=1)
+def Hybrid_loss(bg, residual, targets, masks, residual_t_std, residual_s_std,
+                temp_weight=0.9, salt_weight=0.1):
+    """
+    残差预测损失：pred = bg + residual（物理空间），损失按"残差 std"归一化。
+    bg / residual / targets 均为物理单位的 (B, 40, H, W)。
+    residual_t_std / residual_s_std 为标量（来自 norm_stats['residual_t'/'residual_s']['std']），
+    用残差自身的尺度归一可避免模型把残差塌缩到 0。
+    """
+    pred = bg + residual
+    diff = pred - targets
+
+    temp_loss = ((diff[:, :20] / residual_t_std) ** 2 * masks[:, :20]).sum() / masks[:, :20].sum().clamp(min=1)
+    salinity_loss = ((diff[:, 20:40] / residual_s_std) ** 2 * masks[:, 20:40]).sum() / masks[:, 20:40].sum().clamp(min=1)
     return temp_weight * temp_loss + salt_weight * salinity_loss
 
 
@@ -55,10 +63,17 @@ def compute_normalization_stats(date_list, dataloader, save_path='normalization_
     # 定义需要归一化的变量（输入和输出）
     var_names = SURFACE_VARS + ['bg_t_3d', 'bg_s_3d', 'label_t_3d', 'label_s_3d']
 
+    # 残差统计：label_t_3d - bg_t_3d, label_s_3d - bg_s_3d（按深度逐层累加，得到 20 维 std）
+    residual_names = ['residual_t', 'residual_s']
+    n_depth = 20
     for var in var_names:
         sums[var] = 0.0
         sums_sq[var] = 0.0
         counts[var] = 0
+    for var in residual_names:
+        sums[var] = np.zeros(n_depth, dtype=np.float64)
+        sums_sq[var] = np.zeros(n_depth, dtype=np.float64)
+        counts[var] = np.zeros(n_depth, dtype=np.int64)
 
     # 遍历所有训练样本
     for date in tqdm(date_list, desc="Processing samples"):
@@ -67,7 +82,7 @@ def compute_normalization_stats(date_list, dataloader, save_path='normalization_
         # raw_data is already a flat {output_name: array} dict
         data = raw_data
 
-        # 对每个变量计算统计量
+        # 对每个变量计算统计量（标量统计，全场展平）
         for var in var_names:
             arr = data[var]
             # 只统计非NaN值
@@ -79,8 +94,21 @@ def compute_normalization_stats(date_list, dataloader, save_path='normalization_
                 sums_sq[var] += np.sum(valid_data ** 2)
                 counts[var] += len(valid_data)
 
+        # 残差统计（label - bg，物理空间，按深度逐层累加 → (20,)）
+        for res_name, label_name, bg_name in [
+            ('residual_t', 'label_t_3d', 'bg_t_3d'),
+            ('residual_s', 'label_s_3d', 'bg_s_3d'),
+        ]:
+            res_arr = data[label_name] - data[bg_name]   # (20, H, W)
+            valid_mask = ~np.isnan(res_arr)
+            res_safe = np.where(valid_mask, res_arr, 0.0)
+            sums[res_name]    += res_safe.sum(axis=(1, 2))
+            sums_sq[res_name] += (res_safe ** 2).sum(axis=(1, 2))
+            counts[res_name]  += valid_mask.sum(axis=(1, 2))
+
     # 计算均值和标准差
     stats = {}
+    # 标量变量
     for var in var_names:
         if counts[var] > 0:
             mean = sums[var] / counts[var]
@@ -97,6 +125,24 @@ def compute_normalization_stats(date_list, dataloader, save_path='normalization_
         else:
             print(f"Warning: No valid data for {var}")
             stats[var] = {'mean': 0.0, 'std': 1.0, 'count': 0}
+
+    # 残差变量（per-depth）
+    for var in residual_names:
+        cnt = counts[var]
+        cnt_safe = np.maximum(cnt, 1)
+        mean = sums[var] / cnt_safe
+        var_val = sums_sq[var] / cnt_safe - mean ** 2
+        std = np.sqrt(np.maximum(var_val, 1e-8))
+        # 对 count=0 的深度兜底：std=1（loss 上不会有贡献，因为该层全是 NaN）
+        std = np.where(cnt == 0, 1.0, std)
+        mean = np.where(cnt == 0, 0.0, mean)
+
+        stats[var] = {
+            'mean': mean.tolist(),
+            'std': std.tolist(),
+            'count': cnt.tolist(),
+        }
+        print(f"{var:12s} per-depth std: {[f'{s:.4f}' for s in std]}")
 
     # 保存统计量
     with open(save_path, 'w') as f:
@@ -176,68 +222,81 @@ class OceanDataset(Dataset):
     def __getitem__(self, idx):
         date = self.date_list[idx]
 
-        # 加载单个日期的数据
+        # 加载单个日期的数据（物理单位）
         raw_data = self.dataloader.load_single_date(date, data_index, isLog=False)
 
         # raw_data is already a flat {output_name: array} dict
         data = raw_data
 
-        # 对每个变量进行归一化（在处理NaN之前）
-        if self.norm_stats is not None:
-            for v in SURFACE_VARS:
-                data[v] = self._normalize(data[v], v)
-            data['bg_t_3d'] = self._normalize(data['bg_t_3d'], 'bg_t_3d')
-            data['bg_s_3d'] = self._normalize(data['bg_s_3d'], 'bg_s_3d')
-            data['label_t_3d'] = self._normalize(data['label_t_3d'], 'label_t_3d')
-            data['label_s_3d'] = self._normalize(data['label_s_3d'], 'label_s_3d')
+        # 表面变量做归一化（仅作模型输入用）
+        surface_norm = {}
+        for v in SURFACE_VARS:
+            if self.norm_stats is not None:
+                surface_norm[v] = self._normalize(data[v], v)
+            else:
+                surface_norm[v] = data[v]
 
-        # 构建输入：surface vars + bg_t_3d(20) + bg_s_3d(20)
+        # 背景温盐：保留物理单位（用于 pred = bg + residual），
+        # 同时归一化一份作为模型输入
+        bg_t_phys = data['bg_t_3d']
+        bg_s_phys = data['bg_s_3d']
+        if self.norm_stats is not None:
+            bg_t_in = self._normalize(bg_t_phys, 'bg_t_3d')
+            bg_s_in = self._normalize(bg_s_phys, 'bg_s_3d')
+        else:
+            bg_t_in = bg_t_phys
+            bg_s_in = bg_s_phys
+
+        # 标签保留物理单位（损失内部按 label_*_std 归一化）
+        label_t_phys = data['label_t_3d']
+        label_s_phys = data['label_s_3d']
+
+        # 模型输入：归一化的 surface + 归一化的 bg
         inputs = np.concatenate(
-            [np.expand_dims(data[v], axis=0) for v in SURFACE_VARS] +
-            [data['bg_t_3d'], data['bg_s_3d']],
+            [np.expand_dims(surface_norm[v], axis=0) for v in SURFACE_VARS] +
+            [bg_t_in, bg_s_in],
             axis=0
         ).astype(np.float32)  # (IN_CHANNELS, H, W)
 
-        # 构建标签：label_t_3d(20,400,480) + label_s_3d(20,400,480)
-        # 总共: 20 + 20 = 40 个通道
-        labels = np.concatenate([
-            data['label_t_3d'],                       # (20, 400, 480)
-            data['label_s_3d']                        # (20, 400, 480)
-        ], axis=0).astype(np.float32)                 # (40, 400, 480)
+        # 物理空间的 bg 和 label（用于残差加和与损失）
+        bg_phys = np.concatenate([bg_t_phys, bg_s_phys], axis=0).astype(np.float32)   # (40, H, W)
+        labels = np.concatenate([label_t_phys, label_s_phys], axis=0).astype(np.float32)  # (40, H, W)
 
-        # # 创建mask（用于处理NaN值）：在通道维度取 all，得到 (H, W) 再扩展回 (40, H, W)
-        # mask_1 = ~np.isnan(labels)   # (40, H, W)
-        # mask_2 = (~np.isnan(inputs)).all(axis=0, keepdims=True)  # (1, H, W)
-        # mask = mask_1 & mask_2       # broadcast → (40, H, W)
-        mask = ~np.isnan(labels)
+        mask = ~np.isnan(labels) & ~np.isnan(bg_phys)
 
-        # 裁剪到南中国海区域 (C, H, W) → (C, 200, 240)
+        # 裁剪
         inputs = inputs[:, CROP_ROW_START:CROP_ROW_END, CROP_COL_START:CROP_COL_END]
+        bg_phys = bg_phys[:, CROP_ROW_START:CROP_ROW_END, CROP_COL_START:CROP_COL_END]
         labels = labels[:, CROP_ROW_START:CROP_ROW_END, CROP_COL_START:CROP_COL_END]
-        mask   = mask[:,   CROP_ROW_START:CROP_ROW_END, CROP_COL_START:CROP_COL_END]
+        mask = mask[:, CROP_ROW_START:CROP_ROW_END, CROP_COL_START:CROP_COL_END]
 
-        # 将NaN替换为0
-        inputs = np.nan_to_num(inputs, nan=0.0)
-        labels = np.nan_to_num(labels, nan=0.0)
+        # NaN → 0
+        inputs = np.nan_to_num(inputs, nan=NAN_FILL_VALUE)
+        bg_phys = np.nan_to_num(bg_phys, nan=NAN_FILL_VALUE)
+        labels = np.nan_to_num(labels, nan=NAN_FILL_VALUE)
 
-        return torch.from_numpy(inputs), torch.from_numpy(labels), torch.from_numpy(mask.astype(np.float32))
+        return (torch.from_numpy(inputs),
+                torch.from_numpy(bg_phys),
+                torch.from_numpy(labels),
+                torch.from_numpy(mask.astype(np.float32)))
 
 
-def train_epoch(model, dataloader, optimizer, device, accum_steps=1):
+def train_epoch(model, dataloader, optimizer, device, residual_t_std, residual_s_std, accum_steps=1):
     """训练一个epoch，支持梯度累积（accum_steps>1 模拟更大 batch size）"""
     model.train()
     total_loss = 0.0
     optimizer.zero_grad()
 
     pbar = tqdm(dataloader, desc='Training')
-    for step, (inputs, targets, masks) in enumerate(pbar):
+    for step, (inputs, bg_phys, targets, masks) in enumerate(pbar):
         inputs = inputs.to(device)
+        bg_phys = bg_phys.to(device)
         targets = targets.to(device)
         masks = masks.to(device)
 
-        # 前向传播，损失除以累积步数以保持梯度量级一致
-        outputs = model(inputs)
-        loss = Hybrid_loss(outputs, targets, masks) / accum_steps
+        # 前向：模型输出物理量纲的残差，pred = bg + residual
+        residual = model(inputs)
+        loss = Hybrid_loss(bg_phys, residual, targets, masks, residual_t_std, residual_s_std) / accum_steps
         loss.backward()
 
         total_loss += loss.item() * accum_steps  # 还原为真实损失值记录
@@ -253,32 +312,28 @@ def train_epoch(model, dataloader, optimizer, device, accum_steps=1):
     return total_loss / len(dataloader)
 
 
-def validate_epoch(model, dataloader, device):
+def validate_epoch(model, dataloader, device, residual_t_std, residual_s_std):
     """验证一个epoch，同时计算 pred loss 和 bg baseline loss"""
     model.eval()
     total_loss = 0.0
     total_bg_loss = 0.0
 
-    # bg 在输入中的通道索引：surface_vars 之后的前20通道是 bg_t_3d，接着20通道是 bg_s_3d
-    n_surface = len(SURFACE_VARS)
-
     with torch.no_grad():
         pbar = tqdm(dataloader, desc='Validation')
-        for inputs, targets, masks in pbar:
+        for inputs, bg_phys, targets, masks in pbar:
             inputs = inputs.to(device)
+            bg_phys = bg_phys.to(device)
             targets = targets.to(device)
             masks = masks.to(device)
 
-            # 前向传播
-            outputs = model(inputs)
-
-            # 计算 pred loss
-            loss = Hybrid_loss(outputs, targets, masks)
+            # pred = bg + residual
+            residual = model(inputs)
+            loss = Hybrid_loss(bg_phys, residual, targets, masks, residual_t_std, residual_s_std)
             total_loss += loss.item()
 
-            # 计算 bg baseline loss（bg 直接作为预测）
-            bg = inputs[:, n_surface:n_surface + 40]  # (B, 40, H, W)
-            bg_loss = Hybrid_loss(bg, targets, masks)
+            # bg baseline：residual = 0，等价于直接用 bg 当预测
+            zero_residual = torch.zeros_like(residual)
+            bg_loss = Hybrid_loss(bg_phys, zero_residual, targets, masks, residual_t_std, residual_s_std)
             total_bg_loss += bg_loss.item()
 
             pbar.set_postfix({'pred': f"{loss.item():.6f}", 'bg': f"{bg_loss.item():.6f}"})
@@ -338,12 +393,13 @@ if __name__=="__main__":
 
     # 训练参数
     batch_size = 1
-    num_epochs = 50
-    learning_rate = 5e-5
+    num_epochs = 200
+    learning_rate = 1e-4
     num_workers = 8
-    accum_steps = 1  # 梯度累积步数，等效 batch size = batch_size * accum_steps
+    accum_steps = 4  # 梯度累积步数，等效 batch size = batch_size * accum_steps
 
     # 断点续训：设置为已有的 log 目录路径（如 'logs/20250507_120000'），None 表示从头训练
+    # resume_dir = "./logs/20260518_153654"
     resume_dir = None
 
     # 创建或恢复 log 目录
@@ -368,17 +424,17 @@ if __name__=="__main__":
     print("Preparing datasets...")
     print("="*60)
 
-    dataloader = OceanDatasetLoader()
+    dataloader = OceanDatasetLoader(RAW_DATASET_PATH)
 
     # 生成日期列表（示例：使用已有的10个日期）
     # 实际使用时，您需要根据实际情况生成完整的日期列表
     # train_dates = ['20250501', '20250502', '20250503', '20250504', '20250505',
     #                '20250506', '20250507', '']
     # val_dates = ['20250508', '20250509', '20250510']
-    start_train = date(2021,  1,  8)
-    end_train   = date(2024, 12, 31)
-    start_val   = date(2025,  1,  1)
-    end_val     = date(2025, 12, 31)
+    start_train = date(2023,  1,  8)
+    end_train   = date(2024, 12, 30)
+    start_val   = date(2025, 7,  1)
+    end_val     = date(2025, 12, 19)
 
     def generate_date_list(start, end):
         delta = end - start
@@ -412,6 +468,18 @@ if __name__=="__main__":
     else:
         print("\nNormalization is disabled.")
 
+    # 残差损失需要 residual_t/residual_s 的 per-depth 标准差（用残差自身尺度归一，避免塌缩到 0）
+    if norm_stats is not None:
+        residual_t_std = torch.tensor(norm_stats['residual_t']['std'],
+                                      dtype=torch.float32, device=device).view(1, 20, 1, 1)
+        residual_s_std = torch.tensor(norm_stats['residual_s']['std'],
+                                      dtype=torch.float32, device=device).view(1, 20, 1, 1)
+    else:
+        residual_t_std = torch.ones(1, 20, 1, 1, device=device)
+        residual_s_std = torch.ones(1, 20, 1, 1, device=device)
+    print(f"Loss-space residual_t std (per depth): {residual_t_std.flatten().cpu().tolist()}")
+    print(f"Loss-space residual_s std (per depth): {residual_s_std.flatten().cpu().tolist()}")
+
     # -------------------------------------------------------------------------------------------------
     # 创建数据集
     # -------------------------------------------------------------------------------------------------
@@ -424,7 +492,9 @@ if __name__=="__main__":
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=True
+        pin_memory=True,
+        persistent_workers=True,
+        prefetch_factor=4,
     )
 
     val_loader = DataLoader(
@@ -432,7 +502,9 @@ if __name__=="__main__":
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=True
+        pin_memory=True,
+        persistent_workers=True,
+        prefetch_factor=4,
     )
 
     # -------------------------------------------------------------------------------------------------
@@ -460,7 +532,7 @@ if __name__=="__main__":
     # 创建优化器和损失函数
     # -------------------------------------------------------------------------------------------------
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3)
 
     # -------------------------------------------------------------------------------------------------
     # 断点续训：加载 checkpoint
@@ -499,12 +571,12 @@ if __name__=="__main__":
         print(f"Learning rate: {optimizer.param_groups[0]['lr']:.2e}")
 
         # 训练
-        train_loss = train_epoch(model, train_loader, optimizer, device, accum_steps)
+        train_loss = train_epoch(model, train_loader, optimizer, device, residual_t_std, residual_s_std, accum_steps)
         print(f"Train Loss: {train_loss:.6f}")
         train_loss_history.append(train_loss)
 
         # 验证
-        val_loss, bg_loss = validate_epoch(model, val_loader, device)
+        val_loss, bg_loss = validate_epoch(model, val_loader, device, residual_t_std, residual_s_std)
         print(f"Val Loss: {val_loss:.6f}  |  BG Baseline: {bg_loss:.6f}  |  Ratio: {val_loss/bg_loss:.4f}")
         val_loss_history.append(val_loss)
         bg_loss_history.append(bg_loss)

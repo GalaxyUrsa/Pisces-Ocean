@@ -2,6 +2,8 @@ inference_results/
 ConvNeXt-main/
 logs/
 *.nc
+*.json
+*.pth
 backup/
 config.yaml
 downloaded_data/
