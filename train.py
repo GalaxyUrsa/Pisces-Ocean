@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
+from torch.cuda.amp import autocast, GradScaler
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import matplotlib
@@ -281,7 +282,7 @@ class OceanDataset(Dataset):
                 torch.from_numpy(mask.astype(np.float32)))
 
 
-def train_epoch(model, dataloader, optimizer, device, residual_t_std, residual_s_std, accum_steps=1):
+def train_epoch(model, dataloader, optimizer, scaler, device, residual_t_std, residual_s_std, accum_steps=1):
     """训练一个epoch，支持梯度累积（accum_steps>1 模拟更大 batch size）"""
     model.train()
     total_loss = 0.0
@@ -294,16 +295,19 @@ def train_epoch(model, dataloader, optimizer, device, residual_t_std, residual_s
         targets = targets.to(device)
         masks = masks.to(device)
 
-        # 前向：模型输出物理量纲的残差，pred = bg + residual
-        residual = model(inputs)
-        loss = Hybrid_loss(bg_phys, residual, targets, masks, residual_t_std, residual_s_std) / accum_steps
-        loss.backward()
+        # 前向：混合精度，模型输出物理量纲的残差，pred = bg + residual
+        with autocast():
+            residual = model(inputs)
+            loss = Hybrid_loss(bg_phys, residual, targets, masks, residual_t_std, residual_s_std) / accum_steps
+
+        scaler.scale(loss).backward()
 
         total_loss += loss.item() * accum_steps  # 还原为真实损失值记录
 
         # 每 accum_steps 步或最后一个 step 才更新参数
         if (step + 1) % accum_steps == 0 or (step + 1) == len(dataloader):
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
             optimizer.zero_grad()
 
         # 更新进度条
@@ -326,14 +330,14 @@ def validate_epoch(model, dataloader, device, residual_t_std, residual_s_std):
             targets = targets.to(device)
             masks = masks.to(device)
 
-            # pred = bg + residual
-            residual = model(inputs)
-            loss = Hybrid_loss(bg_phys, residual, targets, masks, residual_t_std, residual_s_std)
-            total_loss += loss.item()
+            with autocast():
+                residual = model(inputs)
+                loss = Hybrid_loss(bg_phys, residual, targets, masks, residual_t_std, residual_s_std)
 
-            # bg baseline：residual = 0，等价于直接用 bg 当预测
-            zero_residual = torch.zeros_like(residual)
-            bg_loss = Hybrid_loss(bg_phys, zero_residual, targets, masks, residual_t_std, residual_s_std)
+                zero_residual = torch.zeros_like(residual)
+                bg_loss = Hybrid_loss(bg_phys, zero_residual, targets, masks, residual_t_std, residual_s_std)
+
+            total_loss += loss.item()
             total_bg_loss += bg_loss.item()
 
             pbar.set_postfix({'pred': f"{loss.item():.6f}", 'bg': f"{bg_loss.item():.6f}"})
@@ -431,10 +435,10 @@ if __name__=="__main__":
     # train_dates = ['20250501', '20250502', '20250503', '20250504', '20250505',
     #                '20250506', '20250507', '']
     # val_dates = ['20250508', '20250509', '20250510']
-    start_train = date(2023,  1,  8)
+    start_train = date(2021,  1,  8)
     end_train   = date(2024, 12, 30)
-    start_val   = date(2025, 7,  1)
-    end_val     = date(2025, 12, 19)
+    start_val   = date(2025, 1,  1)
+    end_val     = date(2025, 12, 25)
 
     def generate_date_list(start, end):
         delta = end - start
@@ -533,6 +537,7 @@ if __name__=="__main__":
     # -------------------------------------------------------------------------------------------------
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3)
+    scaler = GradScaler()
 
     # -------------------------------------------------------------------------------------------------
     # 断点续训：加载 checkpoint
@@ -550,6 +555,8 @@ if __name__=="__main__":
         model.load_state_dict(ckpt['model_state_dict'])
         optimizer.load_state_dict(ckpt['optimizer_state_dict'])
         scheduler.load_state_dict(ckpt['scheduler_state_dict'])
+        if 'scaler_state_dict' in ckpt:
+            scaler.load_state_dict(ckpt['scaler_state_dict'])
         start_epoch = ckpt['epoch'] + 1
         best_val_loss = ckpt['best_val_loss']
         train_loss_history = ckpt['train_loss_history']
@@ -571,7 +578,7 @@ if __name__=="__main__":
         print(f"Learning rate: {optimizer.param_groups[0]['lr']:.2e}")
 
         # 训练
-        train_loss = train_epoch(model, train_loader, optimizer, device, residual_t_std, residual_s_std, accum_steps)
+        train_loss = train_epoch(model, train_loader, optimizer, scaler, device, residual_t_std, residual_s_std, accum_steps)
         print(f"Train Loss: {train_loss:.6f}")
         train_loss_history.append(train_loss)
 
@@ -602,6 +609,7 @@ if __name__=="__main__":
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
             'scheduler_state_dict': scheduler.state_dict(),
+            'scaler_state_dict': scaler.state_dict(),
             'best_val_loss': best_val_loss,
             'train_loss_history': train_loss_history,
             'val_loss_history': val_loss_history,

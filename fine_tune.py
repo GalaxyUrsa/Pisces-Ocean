@@ -16,6 +16,7 @@ import numpy as np
 import torch
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
+from torch.cuda.amp import GradScaler
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import matplotlib
@@ -75,7 +76,7 @@ if __name__ == '__main__':
     accum_steps  = 4
 
     # 断点续训：None 表示从头微调
-    resume_dir = None
+    resume_dir = "./logs/20260519_113743_finetune"
 
     # log 目录
     if resume_dir is not None:
@@ -173,6 +174,7 @@ if __name__ == '__main__':
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='min', factor=0.5, patience=3
     )
+    scaler = GradScaler()
 
     # -------------------------------------------------------------------------
     # 断点续训
@@ -190,6 +192,8 @@ if __name__ == '__main__':
         model.load_state_dict(saved['model_state_dict'])
         optimizer.load_state_dict(saved['optimizer_state_dict'])
         scheduler.load_state_dict(saved['scheduler_state_dict'])
+        if 'scaler_state_dict' in saved:
+            scaler.load_state_dict(saved['scaler_state_dict'])
         start_epoch        = saved['epoch'] + 1
         best_val_loss      = saved['best_val_loss']
         train_loss_history = saved['train_loss_history']
@@ -211,7 +215,7 @@ if __name__ == '__main__':
         print(f"Learning rate: {optimizer.param_groups[0]['lr']:.2e}")
 
         train_loss = train_epoch(
-            model, train_loader, optimizer, device,
+            model, train_loader, optimizer, scaler, device,
             residual_t_std, residual_s_std, accum_steps
         )
         print(f"Train Loss: {train_loss:.6f}")
@@ -243,6 +247,7 @@ if __name__ == '__main__':
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
             'scheduler_state_dict': scheduler.state_dict(),
+            'scaler_state_dict': scaler.state_dict(),
             'best_val_loss': best_val_loss,
             'train_loss_history': train_loss_history,
             'val_loss_history': val_loss_history,
