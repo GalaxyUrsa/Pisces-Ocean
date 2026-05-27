@@ -4,6 +4,7 @@ logs/
 *.nc
 *.json
 *.pth
+*.csv
 backup/
 config.yaml
 downloaded_data/
@@ -19,3 +20,9 @@ docs/
 rmse_analysis_results/
 CLAUDE.md
 normalization_stats.json
+autoregressive_results/
+7_day/
+batch_eval_results/
+results/
+build/
+dist/

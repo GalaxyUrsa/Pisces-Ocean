@@ -8,6 +8,13 @@ A deep learning framework for 3D ocean subsurface reconstruction. Given a backgr
 
 ## Version
 
+v1.3, Released on May 27th, 2026
+- Added 7-day independent forecast (`inference_7day.py`): 7 specialized models, one per lead day, each trained with a different background offset (`bg_offset_days=-day`).
+- Added autoregressive forecast (`inference_autoregressive_forecast.py`): single-model N-day rollout where each step's prediction becomes the next step's background.
+- Added batch evaluation tools (`eval_batch.py`, `eval_batch_7day.py`): evaluate over a date range, output CSV metrics and HTML reports.
+- Extracted shared inference helpers into `inference_utils.py`.
+- Reorganized visualization scripts into `viz/`.
+
 v1.2, Released on May 19th, 2026
 - Adopted a pretrain + fine-tune two-stage paradigm: pretraining uses GLORYS reanalysis data; fine-tuning uses AF analysis-forecast as the background field.
 - Loss function changed to residual prediction (pred = bg + residual), normalized by per-depth residual std to prevent surface layers from dominating gradients.
@@ -58,18 +65,24 @@ Freeze the encoder and fine-tune using AF analysis-forecast as the background fi
 
 ```
 Pisces-Ocean/
-├── train.py                    # Pretraining pipeline (GLORYS bg + GLORYS label)
-├── fine_tune.py                # Fine-tuning pipeline (AF bg + GLORYS label, encoder frozen)
-├── inference.py                # Inference and evaluation
-├── load_datasets.py            # NetCDF data loading
-├── Data_Config.py              # Data source configuration
+├── train.py                             # Pretraining pipeline (GLORYS bg + GLORYS label)
+├── fine_tune.py                         # Fine-tuning pipeline (AF bg + GLORYS label, encoder frozen)
+├── inference.py                         # Single-date inference and evaluation
+├── inference_utils.py                   # Shared inference helpers (load_model, prepare_input, metrics)
+├── inference_autoregressive_forecast.py # N-day autoregressive rollout (one model)
+├── inference_7day.py                    # 7-day independent forecast (7 specialized models)
+├── eval_batch.py                        # Batch evaluation over a date range → CSV
+├── eval_batch_7day.py                   # Batch 7-day forecast evaluation → CSV + HTML
+├── load_datasets.py                     # NetCDF data loading
+├── Data_Config.py                       # Data source configuration (pretrain / single-step finetune)
+├── Data_Config_7day.py                  # Data source configuration for 7-day forecast
 ├── models/
-│   ├── simple_convnext_net.py  # ConvNeXt U-Net (primary model)
-│   ├── unet.py                 # Standard U-Net
-│   ├── unet3d.py               # 3D U-Net
-│   ├── HCANet.py               # Hybrid Conv-Attention Net
-│   └── mymodel.py              # Simple baseline
-├── download_utils/             # Data download scripts
+│   ├── simple_convnext_net.py           # ConvNeXt U-Net (primary model)
+│   ├── unet.py                          # Standard U-Net
+│   ├── unet3d.py                        # 3D U-Net
+│   ├── HCANet.py                        # Hybrid Conv-Attention Net
+│   └── mymodel.py                       # Simple baseline
+├── download_utils/                      # Data download scripts
 │   ├── download_glorys.py
 │   ├── download_analysis_forecast_thetao.py
 │   ├── download_analysis_forecast_so.py
@@ -80,13 +93,13 @@ Pisces-Ocean/
 │   ├── download_multiobs_sss.py
 │   ├── download_glorys_sst_surface.py
 │   └── download_glorys_sss_surface.py
-├── visualize_results_glory.py  # Result visualization
-├── visualize_depth.py          # Depth profile visualization
-├── analyze_glorys_af_rmse.py   # RMSE analysis
-├── rmse_matrix.py              # RMSE matrix
-├── read_nc_file.py             # NetCDF inspection utility
-├── compare_nc.py               # NetCDF comparison utility
-└── logs/                       # Training logs and checkpoints
+├── viz/                                 # Visualization scripts
+│   ├── visualize_depth.py
+│   ├── visualize_autoregressive.py
+│   └── visual_batch_eval.py
+├── read_nc_file.py                      # NetCDF inspection utility
+├── compare_nc.py                        # NetCDF comparison utility
+└── logs/                                # Training logs and checkpoints
 ```
 
 ---
@@ -261,6 +274,62 @@ Outputs:
 - RMSE / MAE / Pearson correlation per depth level
 - Comparison metrics: model prediction vs background vs ground truth
 - HTML visualization report
+
+### 5. Autoregressive Forecast
+
+Rolls the model forward N days from a start date. Each step's prediction becomes the next step's background — no disk reads after step 0.
+
+```bash
+python inference_autoregressive_forecast.py \
+    --start_date 20251220 \
+    --n_days 10 \
+    --model_path logs/<run_id>/best_model.pth \
+    --save_dir ./autoregressive_results
+```
+
+Outputs per-step NetCDF files and an HTML summary report with RMSE trends.
+
+### 6. 7-Day Independent Forecast
+
+Uses 7 separately fine-tuned models, one per lead day. Each model is trained with `bg_offset_days=-day`, so it learns to predict from a background that is `day` days stale — no error accumulation across steps.
+
+Configure the 7 checkpoint paths in [Data_Config_7day.py](Data_Config_7day.py):
+
+```python
+MODEL_PATHS = [
+    './7_day/<run_finetune_1>/best_model.pth',
+    './7_day/<run_finetune_2>/best_model.pth',
+    # ... up to day 7
+]
+```
+
+```bash
+python inference_7day.py --start_date 20251220 --save_dir ./results/7day_results
+```
+
+### 7. Batch Evaluation
+
+Evaluate a single model over a date range:
+
+```bash
+python eval_batch.py \
+    --start 20250101 --end 20251231 \
+    --model_path logs/<run_id>/best_model.pth \
+    --out results.csv
+```
+
+Outputs a CSV with daily RMSE for both model prediction and background baseline.
+
+Evaluate the 7-day forecast system over a date range:
+
+```bash
+python eval_batch_7day.py \
+    --start 20250101 --end 20251231 \
+    --step 7 \
+    --save_dir ./results/batch_eval_results
+```
+
+Outputs per-lead-day mean RMSE tables, time-series plots, and an HTML report.
 
 ---
 

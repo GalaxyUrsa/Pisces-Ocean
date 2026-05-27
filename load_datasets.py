@@ -108,7 +108,7 @@ class OceanDatasetLoader:
             opts = entry[3] if len(entry) > 3 else {}
             offset_days = opts.get('bg_offset_days', 0)
             if offset_days:
-                lookup_date = (datetime.strptime(date, '%Y%m%d') - timedelta(days=offset_days)).strftime('%Y%m%d')
+                lookup_date = (datetime.strptime(date, '%Y%m%d') + timedelta(days=offset_days)).strftime('%Y%m%d')
             else:
                 lookup_date = date
             select_depth = opts.get('select_depth', False)

@@ -8,6 +8,13 @@
 
 ## 版本
 
+v1.3 发布于2026年5月27日
+- 新增7天独立预报（`inference_7day.py`）：7个专用模型，每个对应一个预报时效，分别用不同的 `bg_offset_days=-day` 训练，无误差累积。
+- 新增自回归预报（`inference_autoregressive_forecast.py`）：单模型滚动推进 N 天，每步预测结果作为下一步背景场。
+- 新增批量评估工具（`eval_batch.py`、`eval_batch_7day.py`）：在日期范围内批量评估，输出 CSV 指标和 HTML 报告。
+- 将推理共享工具函数抽取至 `inference_utils.py`。
+- 可视化脚本整理至 `viz/` 目录。
+
 v1.2 发布于2026年5月19日
 - 采用预训练 + 微调两阶段范式：预训练使用 GLORYS 再分析数据，微调使用 AF 分析预报场作为背景场。
 - 损失函数改为残差预测（pred = bg + residual），按逐深度残差 std 归一化，解决深层梯度被表层淹没的问题。
@@ -58,18 +65,24 @@ v1.1 发布于2026年5月12日
 
 ```
 Pisces-Ocean/
-├── train.py                    # 预训练流程（GLORYS bg + GLORYS label）
-├── fine_tune.py                # 微调流程（AF bg + GLORYS label，冻结编码器）
-├── inference.py                # 推理与评估
-├── load_datasets.py            # NetCDF 数据加载
-├── Data_Config.py              # 数据源配置
+├── train.py                             # 预训练流程（GLORYS bg + GLORYS label）
+├── fine_tune.py                         # 微调流程（AF bg + GLORYS label，冻结编码器）
+├── inference.py                         # 单日推理与评估
+├── inference_utils.py                   # 推理共享工具（load_model、prepare_input、指标计算）
+├── inference_autoregressive_forecast.py # N天自回归滚动预报（单模型）
+├── inference_7day.py                    # 7天独立预报（7个专用模型）
+├── eval_batch.py                        # 日期范围批量评估 → CSV
+├── eval_batch_7day.py                   # 7天预报批量评估 → CSV + HTML
+├── load_datasets.py                     # NetCDF 数据加载
+├── Data_Config.py                       # 数据源配置（预训练 / 单步微调）
+├── Data_Config_7day.py                  # 7天预报数据源配置
 ├── models/
-│   ├── simple_convnext_net.py  # ConvNeXt U-Net（主模型）
-│   ├── unet.py                 # Standard U-Net
-│   ├── unet3d.py               # 3D U-Net
-│   ├── HCANet.py               # Hybrid Conv-Attention Net
-│   └── mymodel.py              # 简单基线模型
-├── download_utils/             # 数据下载脚本
+│   ├── simple_convnext_net.py           # ConvNeXt U-Net（主模型）
+│   ├── unet.py                          # Standard U-Net
+│   ├── unet3d.py                        # 3D U-Net
+│   ├── HCANet.py                        # Hybrid Conv-Attention Net
+│   └── mymodel.py                       # 简单基线模型
+├── download_utils/                      # 数据下载脚本
 │   ├── download_glorys.py                            # GLORYS 再分析数据
 │   ├── download_analysis_forecast_thetao.py          # AF 三维温度
 │   ├── download_analysis_forecast_so.py              # AF 三维盐度
@@ -80,13 +93,13 @@ Pisces-Ocean/
 │   ├── download_multiobs_sss.py                      # 多源融合海表盐度
 │   ├── download_glorys_sst_surface.py
 │   └── download_glorys_sss_surface.py
-├── visualize_results_glory.py  # 结果可视化
-├── visualize_depth.py          # 深度剖面可视化
-├── analyze_glorys_af_rmse.py   # RMSE 分析
-├── rmse_matrix.py              # RMSE 矩阵
-├── read_nc_file.py             # NetCDF 查看工具
-├── compare_nc.py               # NetCDF 对比工具
-└── logs/                       # 训练日志与检查点
+├── viz/                                 # 可视化脚本
+│   ├── visualize_depth.py
+│   ├── visualize_autoregressive.py
+│   └── visual_batch_eval.py
+├── read_nc_file.py                      # NetCDF 查看工具
+├── compare_nc.py                        # NetCDF 对比工具
+└── logs/                                # 训练日志与检查点
 ```
 
 ---
@@ -261,6 +274,62 @@ python inference.py --date 20260202 --model_path logs/<run_id>/best_model.pth
 - 逐深度层的 RMSE / MAE / Pearson 相关系数
 - 模型预测 vs 背景场 vs 真值的对比指标
 - HTML 可视化报告
+
+### 5. 自回归预报
+
+从起始日期滚动推进 N 天，每步预测结果作为下一步背景场，step 0 之后不再读取磁盘数据。
+
+```bash
+python inference_autoregressive_forecast.py \
+    --start_date 20251220 \
+    --n_days 10 \
+    --model_path logs/<run_id>/best_model.pth \
+    --save_dir ./autoregressive_results
+```
+
+逐步输出 NetCDF 文件，并生成包含 RMSE 趋势的 HTML 汇总报告。
+
+### 6. 7天独立预报
+
+使用7个独立微调的模型，每个对应一个预报时效（1-7天）。每个模型用 `bg_offset_days=-day` 训练，学习从 `day` 天前的背景场预测目标日，各步之间无误差累积。
+
+在 [Data_Config_7day.py](Data_Config_7day.py) 中配置7个权重路径：
+
+```python
+MODEL_PATHS = [
+    './7_day/<run_finetune_1>/best_model.pth',
+    './7_day/<run_finetune_2>/best_model.pth',
+    # ... 至第7天
+]
+```
+
+```bash
+python inference_7day.py --start_date 20251220 --save_dir ./results/7day_results
+```
+
+### 7. 批量评估
+
+对单模型在日期范围内批量评估：
+
+```bash
+python eval_batch.py \
+    --start 20250101 --end 20251231 \
+    --model_path logs/<run_id>/best_model.pth \
+    --out results.csv
+```
+
+输出每日 RMSE 的 CSV，同时包含背景场基线对比。
+
+对7天预报系统批量评估：
+
+```bash
+python eval_batch_7day.py \
+    --start 20250101 --end 20251231 \
+    --step 7 \
+    --save_dir ./results/batch_eval_results
+```
+
+输出逐预报时效的平均 RMSE 表、时间序列图和 HTML 报告。
 
 ---
 

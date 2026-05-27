@@ -7,5 +7,9 @@
             "envManager": "ms-python.python:conda",
             "packageManager": "ms-python.python:conda"
         }
-    ]
+    ],
+    "terminal.integrated.commandsToSkipShell": [],
+    "simpleBrowser.focusLockIndicator.enabled": false,
+    "workbench.externalBrowser": "default",
+    "remote.autoForwardPorts": false
 }

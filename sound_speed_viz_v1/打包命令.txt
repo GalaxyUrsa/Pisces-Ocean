@@ -1,0 +1,1 @@
+pyinstaller --onefile --name SoundSpeedViz --add-data "frontend;frontend" run.py

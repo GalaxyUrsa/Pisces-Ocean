@@ -435,7 +435,7 @@ if __name__=="__main__":
     # train_dates = ['20250501', '20250502', '20250503', '20250504', '20250505',
     #                '20250506', '20250507', '']
     # val_dates = ['20250508', '20250509', '20250510']
-    start_train = date(2021,  1,  8)
+    start_train = date(2024, 12,  20)
     end_train   = date(2024, 12, 30)
     start_val   = date(2025, 1,  1)
     end_val     = date(2025, 12, 25)
@@ -590,6 +590,12 @@ if __name__=="__main__":
 
         # 更新学习率
         scheduler.step(val_loss)
+
+        # LR 过小时 early stop
+        current_lr = optimizer.param_groups[0]['lr']
+        if current_lr < 1e-6:
+            print(f"Early stopping: lr={current_lr:.2e} < 1e-6")
+            break
 
         # 保存最佳模型
         if val_loss < best_val_loss:

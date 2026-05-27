@@ -43,7 +43,8 @@ IN_CHANNELS = len(SURFACE_VARS) + 40
 
 
 # 编码器模块名：这些参数冻结，不参与梯度更新
-_ENCODER_MODULES = {'proj_in', 'stage1', 'down1', 'stage2', 'down2', 'stage3'}
+# _ENCODER_MODULES = {'proj_in', 'stage1', 'down1', 'stage2', 'down2', 'stage3'}
+_ENCODER_MODULES = {}
 
 
 def freeze_encoder(model: mymodel):
@@ -66,17 +67,17 @@ if __name__ == '__main__':
     print(f"Using device: {device}")
 
     # 预训练权重路径（GLORYS 训练的 best_model.pth）
-    pretrain_path = './logs/fine_tune/best_model.pth'
+    pretrain_path = './logs/pretrain_2021_2024_glo_glo_100epoch/best_model.pth'
 
     # 微调超参
     batch_size   = 1
-    num_epochs   = 50
+    num_epochs   = 30
     learning_rate = 1e-5      # 比预训练小一个量级
     num_workers  = 8
     accum_steps  = 4
 
     # 断点续训：None 表示从头微调
-    resume_dir = "./logs/20260519_113743_finetune"
+    resume_dir = None
 
     # log 目录
     if resume_dir is not None:
@@ -97,8 +98,8 @@ if __name__ == '__main__':
     # -------------------------------------------------------------------------
     start_train = date(2023,  1,  8)
     end_train   = date(2024, 12, 30)
-    start_val   = date(2025,  7,  1)
-    end_val     = date(2025, 12, 19)
+    start_val   = date(2025,  1,  1)
+    end_val     = date(2025, 12, 20)
 
     def generate_date_list(start, end):
         delta = end - start
@@ -230,6 +231,12 @@ if __name__ == '__main__':
         bg_loss_history.append(bg_loss)
 
         scheduler.step(val_loss)
+
+        # LR 过小时 early stop
+        current_lr = optimizer.param_groups[0]['lr']
+        if current_lr < 1e-6:
+            print(f"Early stopping: lr={current_lr:.2e} < 1e-7")
+            break
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss

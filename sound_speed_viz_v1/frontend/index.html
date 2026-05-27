@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ocean Sound Speed 3D</title>
+  <link rel="stylesheet" href="/static/style.css?v=6" />
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+</head>
+<body>
+
+  <!-- ── 上传界面 ── -->
+  <div id="upload-screen" class="upload-screen">
+    <div class="upload-card">
+      <div class="upload-icon">🌊</div>
+      <h1 class="gradient-title" style="font-size:1.8em;margin-bottom:8px">Ocean Sound Speed</h1>
+      <p class="upload-hint">选择一个 NetCDF (.nc) 预测文件开始可视化</p>
+      <label id="drop-zone" class="drop-zone">
+        <input type="file" id="nc-file-input" accept=".nc" hidden />
+        <div class="drop-icon">📂</div>
+        <div class="drop-text">点击选择文件，或拖拽到此处</div>
+        <div class="drop-sub">支持 prediction_YYYYMMDD.nc 格式</div>
+      </label>
+      <div id="upload-status" class="upload-status"></div>
+    </div>
+  </div>
+
+  <!-- ── 主界面 ── -->
+  <div id="main-screen" class="main-screen hidden">
+    <div class="body-row">
+
+      <!-- 左侧边栏 -->
+      <div class="sidebar">
+
+        <div class="side-card" style="padding:12px 14px">
+          <h1 class="gradient-title" style="font-size:1.1em;margin-bottom:4px">🌊 Ocean Sound Speed</h1>
+          <div style="display:flex;align-items:center;gap:6px;margin-top:6px">
+            <span id="loaded-filename" class="loaded-filename" style="flex:1;font-size:0.78em"></span>
+            <button id="reload-btn" class="reload-btn">↩ 重新选择</button>
+          </div>
+        </div>
+
+        <div class="side-card">
+          <div class="side-card-title">📊 数据概览</div>
+          <div class="meta-grid">
+            <div class="meta-item">
+              <div class="meta-label">经度范围</div>
+              <div class="meta-value" id="meta-lon">--</div>
+            </div>
+            <div class="meta-item">
+              <div class="meta-label">纬度范围</div>
+              <div class="meta-value" id="meta-lat">--</div>
+            </div>
+            <div class="meta-item">
+              <div class="meta-label">深度层数</div>
+              <div class="meta-value" id="meta-depths">--</div>
+            </div>
+            <div class="meta-item">
+              <div class="meta-label">网格尺寸</div>
+              <div class="meta-value" id="meta-grid">--</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="side-card">
+          <div class="side-card-title">🎛️ 变量选择</div>
+          <div class="var-list" id="var-tabs">
+            <button class="var-card active" data-var="ss">
+              <div class="var-icon">🌊</div>
+              <div class="var-info">
+                <div class="var-name">声速</div>
+                <div class="var-range" id="range-ss"></div>
+              </div>
+              <div class="var-unit">m/s</div>
+            </button>
+            <button class="var-card" data-var="temp">
+              <div class="var-icon">🌡️</div>
+              <div class="var-info">
+                <div class="var-name">温度</div>
+                <div class="var-range" id="range-temp"></div>
+              </div>
+              <div class="var-unit">°C</div>
+            </button>
+            <button class="var-card" data-var="salt">
+              <div class="var-icon">🧂</div>
+              <div class="var-info">
+                <div class="var-name">盐度</div>
+                <div class="var-range" id="range-salt"></div>
+              </div>
+              <div class="var-unit">psu</div>
+            </button>
+          </div>
+        </div>
+
+        <div class="side-card">
+          <div class="side-card-title">🎨 色标范围</div>
+          <div class="cbar-range-sidebar">
+            <input type="number" class="range-input" id="cmin" placeholder="min" />
+            <span class="range-sep">–</span>
+            <input type="number" class="range-input" id="cmax" placeholder="max" />
+            <button class="range-btn" id="cbar-apply">应用</button>
+          </div>
+          <div class="cbar-colorscale-row">
+            <span class="range-label">预设</span>
+            <select id="colorscale-select" class="colorscale-select"></select>
+          </div>
+          <div class="custom-color-row">
+            <span class="range-label">自定义</span>
+            <div class="color-pair">
+              <input type="color" id="color-min-swatch" class="color-swatch" value="#0000ff" />
+              <input type="text"  id="color-min-hex"    class="color-hex" maxlength="7" placeholder="#rrggbb" />
+              <span class="range-label" style="margin:0 4px">→</span>
+              <input type="color" id="color-max-swatch" class="color-swatch" value="#ff0000" />
+              <input type="text"  id="color-max-hex"    class="color-hex" maxlength="7" placeholder="#rrggbb" />
+            </div>
+          </div>
+        </div>
+
+        <div class="side-card">
+          <div class="side-card-title">📏 深度层</div>
+          <select class="depth-select" id="depth-select"></select>
+          <div class="depth-info">
+            <span id="depth-index">第 -- 层</span>
+            <span id="depth-total">共 -- 层</span>
+          </div>
+          <div class="depth-slider-wrap">
+            <input type="range" class="depth-slider" id="depth-slider" min="0" max="19" value="0" />
+          </div>
+        </div>
+
+        <div class="side-card">
+          <div class="side-card-title">🖱️ 交互模式</div>
+          <div class="mode-list">
+            <label class="mode-item active" id="mode-point">
+              <input type="radio" name="mode" value="point" checked />
+              <span class="mode-text">单点剖面</span>
+            </label>
+            <div class="mode-desc">点击地图查看该点垂直剖面</div>
+            <label class="mode-item" id="mode-transect">
+              <input type="radio" name="mode" value="transect" />
+              <span class="mode-text">两点断面</span>
+            </label>
+            <div class="mode-desc">点击两点查看连线断面</div>
+          </div>
+        </div>
+
+        <div class="side-card">
+          <div class="side-card-title">选点信息</div>
+          <div class="click-info-card empty" id="map-click-info">在右侧地图点击选点…</div>
+        </div>
+
+        <button class="clear-btn" id="clear-btn">🗑️ 清除选点</button>
+
+      </div><!-- end sidebar -->
+      <div class="resizer" id="sidebar-resizer"></div>
+
+      <!-- 右侧图表区 -->
+      <div class="charts-col">
+
+        <div class="main-row" id="main-row">
+          <div class="panel panel-3d" id="panel-3d">
+            <div class="panel-header">
+              <span class="panel-hint" id="vol-panel-title">3D 声速场</span>
+            </div>
+            <div id="vol-graph" class="graph-container"></div>
+          </div>
+          <div class="resizer" id="resizer"></div>
+          <div class="panel panel-map" id="panel-map">
+            <div class="panel-header">
+              <span id="layer-panel-title" class="panel-title"></span>
+              <span class="panel-hint"> · 点击地图选点</span>
+            </div>
+            <div id="layer-map-graph" class="graph-container"></div>
+          </div>
+        </div>
+
+        <div class="row-resizer" id="row-resizer"></div>
+        <div class="panel panel-profile">
+          <div class="profile-header">
+            <div id="profile-panel-title" class="panel-hint"></div>
+            <div class="range-controls">
+              <span class="range-label">深度</span>
+              <input type="number" id="depth-min" class="range-input" placeholder="min" step="10" />
+              <span class="range-sep">–</span>
+              <input type="number" id="depth-max" class="range-input" placeholder="max" step="10" />
+              <span class="range-unit">m</span>
+              <span class="range-divider"></span>
+              <span class="range-label" id="value-range-label">值</span>
+              <input type="number" id="speed-min" class="range-input" placeholder="min" step="1" />
+              <span class="range-sep">–</span>
+              <input type="number" id="speed-max" class="range-input" placeholder="max" step="1" />
+              <span class="range-unit" id="value-range-unit">m/s</span>
+              <button id="range-apply-btn" class="range-btn">应用</button>
+              <button id="range-reset-btn" class="range-btn range-btn-ghost">重置</button>
+            </div>
+          </div>
+          <div id="profile-graph" class="graph-container"></div>
+        </div>
+
+      </div><!-- end charts-col -->
+    </div><!-- end body-row -->
+  </div>
+
+  <script src="/static/app.js?v=10"></script>
+</body>
+</html>

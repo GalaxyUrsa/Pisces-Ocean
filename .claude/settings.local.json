@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(python:*)",
-      "Bash(D:/Anaconda/python.exe:*)"
+      "Bash(D:/Anaconda/python.exe:*)",
+      "Bash(grep -E \"\\\\.\\(py|yaml|yml|json\\)$\")",
+      "Bash(xargs grep -l \"Dataset\\\\|DataLoader\")",
+      "Bash(start \"f:\\\\PythonWorkspace\\\\Pisces-Ocean\\\\sound_speed_viz_v2\\\\frontend\\\\test_hover.html\")",
+      "Bash(handle64.exe f:/PythonWorkspace/Pisces-Ocean/inference_glory_results)"
     ]
   }
 }

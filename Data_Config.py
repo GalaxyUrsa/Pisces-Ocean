@@ -19,8 +19,8 @@ data_index = (
     [
         ['Glorys_thetao_0.083deg',  'thetao', 'label_t_3d', {'select_depth': True, 'bg_offset_days': -1}],
         ['Glorys_so_0.083deg',      'so',     'label_s_3d', {'select_depth': True, 'bg_offset_days': -1}],
-        ['Glorys_thetao_0.083deg',  'thetao', 'bg_t_3d',    {'select_depth': True}],
-        ['Glorys_so_0.083deg',      'so',     'bg_s_3d',    {'select_depth': True}],
+        ['AF_thetao_0.083deg',  'thetao', 'bg_t_3d',    {'select_depth': True}],
+        ['AF_so_0.083deg',      'so',     'bg_s_3d',    {'select_depth': True}],
     ]
 )
 
