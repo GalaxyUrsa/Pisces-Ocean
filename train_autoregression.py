@@ -385,32 +385,49 @@ def train_epoch(model, dataloader, optimizer, scaler, device, norm_stats, accum_
 
 
 def validate_epoch(model, dataloader, device, norm_stats):
-    """验证一个epoch，同时计算 pred loss 和 bg baseline loss"""
+    """AR 展开验证：7 步加权 loss，始终用上一步预测作为输入（全自回归）。"""
     model.eval()
-    total_loss = 0.0
+    total_loss    = 0.0
     total_bg_loss = 0.0
 
     with torch.no_grad():
         pbar = tqdm(dataloader, desc='Validation')
-        for inputs, bg_phys, targets, masks in pbar:
-            inputs = inputs.to(device, non_blocking=True)
-            bg_phys = bg_phys.to(device, non_blocking=True)
-            targets = targets.to(device, non_blocking=True)
-            masks = masks.to(device, non_blocking=True)
+        for batch in pbar:
+            if batch is None:
+                continue
+            bg_phys_seq, labels_seq, masks_seq = batch
+            bg_phys_seq = bg_phys_seq.to(device, non_blocking=True)
+            labels_seq  = labels_seq.to(device,  non_blocking=True)
+            masks_seq   = masks_seq.to(device,   non_blocking=True)
+
+            bg_current    = bg_phys_seq[:, 0]
+            bg_current_bl = bg_phys_seq[:, 0]  # baseline 独立跑
 
             with autocast('cuda'):
-                residual = model(inputs)
-                loss = Hybrid_loss(bg_phys, residual, targets, masks, norm_stats)
+                ar_loss = torch.tensor(0.0, device=device)
+                bl_loss = torch.tensor(0.0, device=device)
+                for ar_step in range(AR_STEPS):
+                    # 模型预测
+                    residual   = model(bg_current)
+                    pred       = bg_current + residual
+                    step_loss  = Hybrid_loss(bg_current, residual, labels_seq[:, ar_step],
+                                             masks_seq[:, ar_step], norm_stats)
+                    ar_loss    = ar_loss + AR_STEP_WEIGHTS[ar_step] * step_loss
+                    bg_current = pred.detach()
 
-                zero_residual = torch.zeros_like(residual)
-                bg_loss = Hybrid_loss(bg_phys, zero_residual, targets, masks, norm_stats)
+                    # baseline：零残差（背景场不做任何修正）
+                    zero_res  = torch.zeros_like(bg_current_bl)
+                    bl_step   = Hybrid_loss(bg_current_bl, zero_res, labels_seq[:, ar_step],
+                                            masks_seq[:, ar_step], norm_stats)
+                    bl_loss   = bl_loss + AR_STEP_WEIGHTS[ar_step] * bl_step
+                    bg_current_bl = bg_current_bl  # baseline bg 保持第 0 天不变
 
-            total_loss += loss.item()
-            total_bg_loss += bg_loss.item()
+            total_loss    += ar_loss.item()
+            total_bg_loss += bl_loss.item()
+            pbar.set_postfix({'pred': f"{ar_loss.item():.6f}", 'bg': f"{bl_loss.item():.6f}"})
 
-            pbar.set_postfix({'pred': f"{loss.item():.6f}", 'bg': f"{bg_loss.item():.6f}"})
-
-    return total_loss / len(dataloader), total_bg_loss / len(dataloader)
+    n = max(len(dataloader), 1)
+    return total_loss / n, total_bg_loss / n
 
 
 def plot_loss_curves(train_losses, val_losses, save_path='loss_curve.png', bg_losses=None):
