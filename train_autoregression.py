@@ -336,38 +336,52 @@ class OceanARDataset(Dataset):
                 torch.from_numpy(masks_seq))
 
 
-def train_epoch(model, dataloader, optimizer, scaler, device, norm_stats, accum_steps=1):
-    """训练一个epoch，支持梯度累积（accum_steps>1 模拟更大 batch size）"""
+def train_epoch(model, dataloader, optimizer, scaler, device, norm_stats, accum_steps=1, epoch=0):
+    """AR 展开训练：7 步加权 loss，前 AR_WARMUP_EPOCHS epoch teacher forcing，之后全自回归。"""
     model.train()
     total_loss = 0.0
     optimizer.zero_grad()
 
     pbar = tqdm(dataloader, desc='Training')
-    for step, (inputs, bg_phys, targets, masks) in enumerate(pbar):
-        inputs = inputs.to(device, non_blocking=True)
-        bg_phys = bg_phys.to(device, non_blocking=True)
-        targets = targets.to(device, non_blocking=True)
-        masks = masks.to(device, non_blocking=True)
+    for step_idx, batch in enumerate(pbar):
+        if batch is None:
+            continue
+        bg_phys_seq, labels_seq, masks_seq = batch
+        bg_phys_seq = bg_phys_seq.to(device, non_blocking=True)   # (B, 8, C, H, W)
+        labels_seq  = labels_seq.to(device,  non_blocking=True)   # (B, 7, C, H, W)
+        masks_seq   = masks_seq.to(device,   non_blocking=True)   # (B, 7, C, H, W)
 
-        # 前向：混合精度，模型输出物理量纲的残差，pred = bg + residual
+        bg_current = bg_phys_seq[:, 0]  # 第 0 天真值作为初始输入
+
         with autocast('cuda'):
-            residual = model(inputs)
-            loss = Hybrid_loss(bg_phys, residual, targets, masks, norm_stats) / accum_steps
+            ar_loss = torch.tensor(0.0, device=device)
+            for ar_step in range(AR_STEPS):
+                if epoch < AR_WARMUP_EPOCHS:
+                    bg = bg_phys_seq[:, ar_step]   # teacher forcing
+                else:
+                    bg = bg_current                # 自回归
+
+                residual  = model(bg)
+                pred      = bg + residual
+                step_loss = Hybrid_loss(bg, residual, labels_seq[:, ar_step],
+                                        masks_seq[:, ar_step], norm_stats)
+                ar_loss   = ar_loss + AR_STEP_WEIGHTS[ar_step] * step_loss
+                bg_current = pred.detach()         # 截断梯度
+
+            loss = ar_loss / accum_steps
 
         scaler.scale(loss).backward()
+        total_loss += loss.item() * accum_steps
 
-        total_loss += loss.item() * accum_steps  # 还原为真实损失值记录
-
-        # 每 accum_steps 步或最后一个 step 才更新参数
-        if (step + 1) % accum_steps == 0 or (step + 1) == len(dataloader):
+        if (step_idx + 1) % accum_steps == 0 or (step_idx + 1) == len(dataloader):
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad()
 
-        # 更新进度条
-        pbar.set_postfix({'loss': f"{loss.item() * accum_steps:.6f}"})
+        pbar.set_postfix({'loss': f"{loss.item() * accum_steps:.6f}",
+                          'mode': 'warmup' if epoch < AR_WARMUP_EPOCHS else 'AR'})
 
-    return total_loss / len(dataloader)
+    return total_loss / max(len(dataloader), 1)
 
 
 def validate_epoch(model, dataloader, device, norm_stats):
@@ -629,7 +643,7 @@ if __name__=="__main__":
         print(f"Learning rate: {optimizer.param_groups[0]['lr']:.2e}")
 
         # 训练
-        train_loss = train_epoch(model, train_loader, optimizer, scaler, device, norm_stats, accum_steps)
+        train_loss = train_epoch(model, train_loader, optimizer, scaler, device, norm_stats, accum_steps, epoch=epoch)
         print(f"Train Loss: {train_loss:.6f}")
         train_loss_history.append(train_loss)
 
