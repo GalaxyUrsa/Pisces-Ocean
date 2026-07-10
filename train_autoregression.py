@@ -566,10 +566,8 @@ if __name__=="__main__":
     # -------------------------------------------------------------------------------------------------
     # 创建数据集
     # -------------------------------------------------------------------------------------------------
-    train_dataset = OceanDataset(train_dates, dataloader, norm_stats, npz_dir=NPZ_DIR)
-    val_dataset = OceanDataset(val_dates, dataloader, norm_stats, npz_dir=NPZ_DIR)
-    # train_dataset = OceanDataset(train_dates, dataloader, norm_stats)
-    # val_dataset = OceanDataset(val_dates, dataloader, norm_stats)
+    train_dataset = OceanARDataset(train_dates, dataloader, norm_stats, npz_dir=NPZ_DIR)
+    val_dataset   = OceanARDataset(val_dates,   dataloader, norm_stats, npz_dir=NPZ_DIR)
 
     # 创建数据加载器
     train_loader = DataLoader(
@@ -580,6 +578,7 @@ if __name__=="__main__":
         pin_memory=True,
         persistent_workers=True,
         prefetch_factor=1,
+        collate_fn=_ar_collate_fn,
     )
 
     val_loader = DataLoader(
@@ -590,6 +589,7 @@ if __name__=="__main__":
         pin_memory=True,
         persistent_workers=True,
         prefetch_factor=1,
+        collate_fn=_ar_collate_fn,
     )
 
     # -------------------------------------------------------------------------------------------------
@@ -660,6 +660,8 @@ if __name__=="__main__":
         print(f"Learning rate: {optimizer.param_groups[0]['lr']:.2e}")
 
         # 训练
+        mode = "warmup (TF)" if epoch < AR_WARMUP_EPOCHS else "autoregressive"
+        print(f"Mode: {mode}")
         train_loss = train_epoch(model, train_loader, optimizer, scaler, device, norm_stats, accum_steps, epoch=epoch)
         print(f"Train Loss: {train_loss:.6f}")
         train_loss_history.append(train_loss)
