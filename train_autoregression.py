@@ -60,8 +60,8 @@ def _stats_worker(args):
     date_str, npz_dir_str, base_path_str = args
     from pathlib import Path
     import numpy as np
-    from Data_Config import INPUT_VARS, OUTPUT_VARS, data_index, N_DEPTH, BG_OFFSET_DAYS
-    from Data_Config import CROP_ROW_START, CROP_ROW_END, CROP_COL_START, CROP_COL_END
+    from Data_Config_AR import INPUT_VARS, OUTPUT_VARS, data_index, N_DEPTH, BG_OFFSET_DAYS
+    from Data_Config_AR import CROP_ROW_START, CROP_ROW_END, CROP_COL_START, CROP_COL_END
 
     var_names      = [e[2] for e in INPUT_VARS + OUTPUT_VARS]
     residual_names = [
