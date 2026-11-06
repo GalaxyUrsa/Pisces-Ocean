@@ -18,7 +18,8 @@ USERNAME, PASSWORD = load_credentials()
 
 # Dataset configuration（保持原样）
 dataset_id = "cmems_mod_glo_phy_my_0.083deg_P1D-m"
-variables = ["so", "thetao", "uo", "vo"]
+# variables = ["so", "thetao", "uo", "vo"]
+variables = ["uo"]
 
 # Spatial domain（保持原样）
 minimum_longitude = 100
@@ -31,7 +32,7 @@ minimum_depth = 0.49402499198913574
 maximum_depth = 651
 
 # Time range（保持原样）
-start_date = "2025-10-01"
+start_date = "2021-01-01"
 end_date = "2025-12-31"
 
 # Output directory（保持原样）

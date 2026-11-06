@@ -12,12 +12,12 @@ import torch
 from pathlib import Path
 from datetime import datetime
 
-from load_datasets import OceanDatasetLoader
-from visualize_results_glory import visualize_glory_results
-from inference_utils import (
+from utils.load_datasets import OceanDatasetLoader
+from utils.visualize_results_glory import visualize_glory_results
+from utils.inference_utils import (
     load_model, prepare_input, prepare_target, prepare_background,
     save_to_netcdf, compute_metrics, compute_layer_rmse, print_metrics_table,
-    DEFAULT_PROFILE_COORDS,
+    DEFAULT_PROFILE_COORDS, OUT_VAR_SLICES,
 )
 from Data_Config import (
     data_index, RAW_DATASET_PATH,
@@ -31,9 +31,9 @@ from Data_Config import (
 
 def main():
     parser = argparse.ArgumentParser(description='Ocean Reconstruction Inference')
-    parser.add_argument('--model_path', type=str, default='./logs/20260520_151940_finetune/best_model.pth', help='Path to trained model checkpoint')
+    parser.add_argument('--model_path', type=str, default='./logs/pretrain_2021_2024_glo_glo_convnextv3_50_layer_100epoch/best_model.pth', help='Path to trained model checkpoint')
     parser.add_argument('--date', type=str, default='20251220', help='Inference date (YYYYMMDD)')
-    parser.add_argument('--save_dir', type=str, default='./inference_glory_results', help='Root directory to save results')
+    parser.add_argument('--save_dir', type=str, default='./results/inference_result', help='Root directory to save results')
     parser.add_argument('--device', type=str, default='cuda', help='Device: cuda or cpu')
     parser.add_argument('--profile_coords', type=str, default="12.5,115; 25.0,130.0; 37.5,145; 20.0,120.0; 30.0,135.0", 
                         help='Semicolon-separated lat,lon pairs for vertical profiles')
@@ -93,19 +93,15 @@ def main():
 
     # Compute Metrics
     print("\nComputing metrics...")
-    metrics      = compute_metrics(prediction,     target)
-    temp_metrics = compute_metrics(prediction[:20], target[:20])
-    salt_metrics = compute_metrics(prediction[20:], target[20:])
-    temp_layer_rmse = compute_layer_rmse(prediction[:20], target[:20])
-    salt_layer_rmse = compute_layer_rmse(prediction[20:], target[20:])
+    metrics    = compute_metrics(prediction, target)
+    bg_metrics = compute_metrics(background, target)
 
-    bg_metrics      = compute_metrics(background,     target)
-    bg_temp_metrics = compute_metrics(background[:20], target[:20])
-    bg_salt_metrics = compute_metrics(background[20:], target[20:])
-    bg_temp_layer_rmse = compute_layer_rmse(background[:20], target[:20])
-    bg_salt_layer_rmse = compute_layer_rmse(background[20:], target[20:])
+    var_metrics       = {v: compute_metrics(prediction[sl], target[sl]) for v, sl in OUT_VAR_SLICES.items()}
+    var_layer_rmse    = {v: compute_layer_rmse(prediction[sl], target[sl]) for v, sl in OUT_VAR_SLICES.items()}
+    bg_var_metrics    = {v: compute_metrics(background[sl], target[sl]) for v, sl in OUT_VAR_SLICES.items()}
+    bg_var_layer_rmse = {v: compute_layer_rmse(background[sl], target[sl]) for v, sl in OUT_VAR_SLICES.items()}
 
-    print_metrics_table(metrics, temp_metrics, salt_metrics, bg_metrics, bg_temp_metrics, bg_salt_metrics)
+    print_metrics_table(metrics, var_metrics, bg_metrics, bg_var_metrics)
 
     # Save Predict Result as NetCDF
     print("\nSaving NetCDF files...")
@@ -114,16 +110,13 @@ def main():
     # ── Visualise ─────────────────────────────────────────────────────────
     html_path = visualize_glory_results(
         pred_path, target_path, bg_path,
-        metrics, temp_metrics, salt_metrics,
+        metrics, var_metrics,
         save_dir, args.date,
         profile_coords=profile_coords,
-        temp_layer_rmse=temp_layer_rmse,
-        salt_layer_rmse=salt_layer_rmse,
+        var_layer_rmse=var_layer_rmse,
         bg_metrics=bg_metrics,
-        bg_temp_metrics=bg_temp_metrics,
-        bg_salt_metrics=bg_salt_metrics,
-        bg_temp_layer_rmse=bg_temp_layer_rmse,
-        bg_salt_layer_rmse=bg_salt_layer_rmse,
+        bg_var_metrics=bg_var_metrics,
+        bg_var_layer_rmse=bg_var_layer_rmse,
     )
 
     print("\n" + "=" * 60)

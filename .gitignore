@@ -19,10 +19,16 @@ PanoplyWin/
 docs/
 rmse_analysis_results/
 CLAUDE.md
-normalization_stats.json
 autoregressive_results/
 7_day/
 batch_eval_results/
 results/
 build/
 dist/
+技术路线.html
+.claude/
+AGENTS.md
+tests/
+models/
+train_AR_ckpt.py
+train_ckpt.py
