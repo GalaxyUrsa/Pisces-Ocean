@@ -29,7 +29,7 @@ dist/
 .claude/
 AGENTS.md
 tests/
-models/
+# models/
 train_AR_ckpt.py
 train_ckpt.py
 models_backup/
