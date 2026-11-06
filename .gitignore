@@ -32,3 +32,4 @@ tests/
 models/
 train_AR_ckpt.py
 train_ckpt.py
+models_backup/
